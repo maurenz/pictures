@@ -41,24 +41,31 @@ jobs:
           test -f website/index.html
           test -f website/admin/api.php
 
+      - name: lftp installieren
+        run: sudo apt-get install -y -qq lftp >/dev/null
+
+      # Lädt website/ hoch. Ohne --delete: auf dem Server wird nie etwas gelöscht.
+      # storage/, media/ und data/ sind zusätzlich ausgeschlossen.
+      # Das TLS-Zertifikat des Servers wird geprüft: FTP_SERVER muss der Hostname
+      # sein, auf den das Zertifikat ausgestellt ist (keine IP-Adresse).
       - name: Per FTP hochladen
-        uses: SamKirkland/FTP-Deploy-Action@v4.4.0
-        with:
-          server: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_BENUTZER }}
-          password: ${{ secrets.FTP_PASSWORT }}
-          protocol: ${{ vars.FTP_PROTOKOLL || 'ftps' }}
-          port: 21
-          local-dir: ./website/
-          server-dir: ${{ secrets.FTP_ORDNER || './' }}
-          dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.probelauf }}
-          log-level: ${{ (github.event_name == 'workflow_dispatch' && inputs.ausfuehrlich) && 'verbose' || 'standard' }}
-          exclude: |
-            **/.git*
-            **/.git*/**
-            **/node_modules/**
-            storage/**
-            media/**
-            data/**
-            _technik-test/**
-            technik-test.php
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_BENUTZER: ${{ secrets.FTP_BENUTZER }}
+          LFTP_PASSWORD: ${{ secrets.FTP_PASSWORT }}
+          FTP_ORDNER: ${{ secrets.FTP_ORDNER || './' }}
+          PROBELAUF: ${{ github.event_name == 'workflow_dispatch' && inputs.probelauf }}
+          AUSFUEHRLICH: ${{ github.event_name == 'workflow_dispatch' && inputs.ausfuehrlich }}
+        run: |
+          probe=""; [ "$PROBELAUF" = "true" ] && probe="--dry-run" && echo "Probelauf: es wird nichts verändert."
+          debug=""; [ "$AUSFUEHRLICH" = "true" ] && debug="debug 3;"
+          lftp -c "$debug
+            set ftp:ssl-force true; set ftp:ssl-protect-data true;
+            set net:max-retries 3; set net:reconnect-interval-base 5; set net:timeout 30;
+            open --env-password -u \"$FTP_BENUTZER\" \"$FTP_SERVER\";
+            mirror --reverse --verbose --no-perms --parallel=2 $probe \
+              --exclude-glob .git* \
+              --exclude-glob storage/ --exclude-glob media/ --exclude-glob data/ \
+              --exclude-glob _technik-test/ --exclude-glob technik-test.php \
+              website/ \"$FTP_ORDNER\""
+          echo "Fertig."

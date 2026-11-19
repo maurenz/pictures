@@ -29,9 +29,9 @@ Benötigte Geheimnisse (Settings → Secrets and variables → Actions):
 
 | Name | Inhalt |
 |---|---|
-| `FTP_SERVER` | FTP-Server aus dem netcup Control Panel |
+| `FTP_SERVER` | Hostname des FTP-Servers (keine IP-Adresse) |
 | `FTP_BENUTZER` | FTP-Benutzername |
 | `FTP_PASSWORT` | FTP-Passwort |
 | `FTP_ORDNER` | Zielordner, z. B. `./` oder `/httpdocs/` (mit `/` am Ende) |
 
-Optional als Variable: `FTP_PROTOKOLL` = `ftp`, falls die verschlüsselte Verbindung (`ftps`) nicht klappt.
+Die Verbindung ist immer verschlüsselt (FTPS), das Zertifikat wird geprüft. `FTP_SERVER` muss daher der Hostname sein, auf den das Zertifikat ausgestellt ist, keine IP-Adresse.
