@@ -437,18 +437,35 @@ class Globus {
 
   /* Weltstufe: einzelne Ortsnamen nacheinander weich einblenden, nur sichtbare Punkte */
   namenWechseln() {
-    let index = 0;
+    // je Ort: wann er sichtbar wurde und wann er zuletzt beschriftet war
+    const status = new Map();
+    let zuletzt = null;
     const takt = () => {
       if (this.tiefe === 1 && !this.manuell && !ruhig() && this.el.offsetParent && !document.hidden) {
+        const jetzt = performance.now();
         const cx = this.el.clientWidth / 2, cy = this.el.clientHeight / 2 + this.ty;
         const grenze = (this.r || cx) * this.skala * 0.85;
-        const sichtbar = [...this.knoepfe.values()].filter(k => {
-          if (k.classList.contains('hinten')) return false;
+        const sichtbar = [];
+        for (const k of this.knoepfe.values()) {
+          const key = k.dataset.key;
           const m = /translate\(([-\d.]+)px, ([-\d.]+)px\)/.exec(k.style.transform);
-          return m && Math.hypot(+m[1] - cx, +m[2] - cy) < grenze;
-        });
+          const drin = !k.classList.contains('hinten') && m && Math.hypot(+m[1] - cx, +m[2] - cy) < grenze;
+          let st = status.get(key);
+          if (!st) { st = { seit: null, gezeigt: -Infinity }; status.set(key, st); }
+          if (!drin) { st.seit = null; continue; }
+          if (st.seit === null) st.seit = jetzt;
+          sichtbar.push({ k, st, x: +m[1] });
+        }
         if (sichtbar.length) {
-          const k = sichtbar[index++ % sichtbar.length];
+          // zuerst Orte, die seit dem Erscheinen noch keinen Namen hatten, sonst den am längsten nicht gezeigten;
+          // bei Gleichstand den, der beim Drehen als Nächstes aus dem Bild wandert (am weitesten rechts)
+          const neu = s => s.st.gezeigt < s.st.seit;
+          sichtbar.sort((a, b) => (neu(b) - neu(a)) || (neu(a) ? 0 : a.st.gezeigt - b.st.gezeigt) || (b.x - a.x));
+          let wahl = sichtbar[0];
+          if (wahl.k === zuletzt && sichtbar.length > 1) wahl = sichtbar[1];
+          wahl.st.gezeigt = jetzt;
+          zuletzt = wahl.k;
+          const k = wahl.k;
           k.classList.add('zeigt');
           setTimeout(() => k.classList.remove('zeigt'), 2200);
         }
