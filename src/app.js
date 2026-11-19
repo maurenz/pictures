@@ -61,9 +61,64 @@ const speicher = {
 let DATEN = { alben: [], seiten: {} };
 let ALBEN = [];
 
+/* Entfernung zweier Orte in km */
+function km(a, b) {
+  const r = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * r, dLon = (b.lon - a.lon) * r;
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dLon / 2) ** 2;
+  return 12742 * Math.asin(Math.min(1, Math.sqrt(x)));
+}
+const hatKoord = a => a && a.ort && Number.isFinite(a.ort.lat) && Number.isFinite(a.ort.lon);
+
+/* Alben im selben Monat so ordnen, dass der Weg zwischen den Orten am kürzesten ist
+   (inklusive Übergang zum vorherigen und nächsten Album). Gleiche Logik wie in der Verwaltung. */
+function besteFolge(gruppe, vor, nach) {
+  const mit = gruppe.filter(hatKoord), ohne = gruppe.filter(a => !hatKoord(a));
+  if (mit.length < 2) return gruppe;
+  const kosten = folge => {
+    let k = 0;
+    if (hatKoord(vor)) k += km(vor.ort, folge[0].ort);
+    for (let i = 1; i < folge.length; i++) k += km(folge[i - 1].ort, folge[i].ort);
+    if (hatKoord(nach)) k += km(folge[folge.length - 1].ort, nach.ort);
+    return k;
+  };
+  let beste = mit, besteK = kosten(mit);
+  if (mit.length <= 7) {
+    const permutieren = (rest, bisher) => {
+      if (!rest.length) { const k = kosten(bisher); if (k < besteK - 1e-6) { besteK = k; beste = bisher; } return; }
+      rest.forEach((x, i) => permutieren([...rest.slice(0, i), ...rest.slice(i + 1)], [...bisher, x]));
+    };
+    permutieren(mit, []);
+  }
+  return [...beste, ...ohne];
+}
+
+function zeitlichOrdnen(alben) {
+  const auf = [...alben].sort((a, b) => (a.jahr - b.jahr) || (a.monat - b.monat) || (a.nr - b.nr));
+  const aus = [];
+  for (let i = 0; i < auf.length;) {
+    let j = i;
+    while (j < auf.length && auf[j].jahr === auf[i].jahr && auf[j].monat === auf[i].monat) j++;
+    const gruppe = auf.slice(i, j);
+    aus.push(...(gruppe.length > 1 ? besteFolge(gruppe, aus[aus.length - 1], auf[j]) : gruppe));
+    i = j;
+  }
+  return aus;
+}
+
+/* Ort, falls er sich vom Albumnamen unterscheidet */
+function ortAnders(a) {
+  const gleich = x => (x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  return a.ort && a.ort.name && gleich(a.ort.name) !== gleich(a.titel) ? a.ort.name : '';
+}
+
+function titelBlock(a) {
+  const ort = ortAnders(a);
+  return h('span', { class: 'titel' }, h('span', { class: 'titel-text', text: a.titel }), ort ? h('span', { class: 'titel-ort', text: ort }) : null);
+}
+
 function datenVorbereiten(roh) {
-  const alben = (roh.alben || []).filter(a => a.fotos && a.fotos.length);
-  alben.sort((a, b) => (b.jahr - a.jahr) || (b.monat - a.monat) || (b.nr - a.nr));
+  const alben = zeitlichOrdnen((roh.alben || []).filter(a => a.fotos && a.fotos.length)).reverse();
   for (const a of alben) {
     a.mon = MON[a.monat - 1] || '';
     a.monatLang = MONATE[a.monat - 1] || '';
@@ -206,7 +261,7 @@ class Globus {
     this.kugel = svgEl('path', { class: 'kugel' });
     this.land = svgEl('path', { class: 'land', pathLength: '1' });
     this.laenderG = svgEl('g', { class: 'laender' });
-    this.svg.append(this.kugel, this.land, this.laenderG);
+    this.svg.append(this.kugel, this.laenderG, this.land);
     this.punkteEl = h('div', { class: 'punkte' });
     this.el.append(this.svg, this.punkteEl);
     this.knoepfe = new Map();
@@ -290,6 +345,7 @@ class Globus {
     // Nach dem Zeichnen die Strichmuster entfernen: spart beim Drehen viel Rechenzeit
     setTimeout(() => {
       this.gezeichnet = true;
+      this.laenderG.classList.add('gefuellt');
       for (const p of [this.land, ...(this.laenderPfade || []).map(x => x.p)]) {
         p.classList.remove('zeichnen');
         p.removeAttribute('pathLength');
@@ -609,7 +665,7 @@ function zeitstrahlBauen(alben) {
     const eintrag = h('a', { class: 'eintrag', href: `#/album/${a.nr}`, 'data-nr': a.nr, 'aria-label': `${a.titel}, ${a.monatLang} ${a.jahr}` },
       h('span'),
       h('span', { class: 'punkt', 'aria-hidden': 'true' }),
-      h('span', { class: 'titel', text: a.titel }),
+      titelBlock(a),
       h('span', { class: 'monat', text: a.mon, 'aria-hidden': 'true' }));
     if (MAUS.matches) {
       eintrag.addEventListener('mouseenter', e => { app.hoverAlbum(a); vorschauZeigen(a, e); });
@@ -727,7 +783,7 @@ function blattZeigen(p) {
     liste.append(h('a', { class: 'eintrag', href: `#/album/${a.nr}`, 'aria-label': `${a.titel}, ${a.monatLang} ${a.jahr}` },
       h('span', { class: 'jahrzahl zahl', text: String(a.jahr) }),
       h('span', { class: 'punkt', 'aria-hidden': 'true' }),
-      h('span', { class: 'titel', text: a.titel }),
+      titelBlock(a),
       h('span', { class: 'monat', text: a.mon, 'aria-hidden': 'true' })));
   }
   app.blatt = h('section', { class: 'blatt', 'aria-label': `Alben in ${p.name}` },
@@ -889,8 +945,7 @@ class AlbumAnsicht {
     this.exifDesk = h('dl', { class: 'exif zahl' });
     this.titelMobil = h('span', { class: 'album-titel', text: a.titel });
     this.titelDesk = h('h1', { text: a.titel });
-    const gleich = x => (x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-    const ortName = a.ort && a.ort.name && gleich(a.ort.name) !== gleich(a.titel) ? a.ort.name : '';
+    const ortName = ortAnders(a);
     this.infoEl = h('section', { class: 'info-blatt', hidden: true, 'aria-label': 'Albuminformationen' },
       h('button', { class: 'blatt-zu', 'aria-label': 'Schließen', icon: 'zu', onclick: () => this.infoUm(false) }),
       h('h2', { text: a.titel }),

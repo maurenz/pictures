@@ -266,7 +266,8 @@ function navigation(aktiv) {
 
 async function listeAnsicht() {
   try { const d = await api('daten'); STAND = d; } catch { /* mit vorhandenem Stand */ }
-  const alben = [...STAND.alben].sort((a, b) => (b.jahr - a.jahr) || (b.monat - a.monat) || (b.nr - a.nr));
+  const pos = new Map((STAND.reihenfolge || []).map((nr, i) => [nr, i]));
+  const alben = [...STAND.alben].sort((a, b) => (pos.has(a.nr) && pos.has(b.nr) ? pos.get(b.nr) - pos.get(a.nr) : (b.jahr - a.jahr) || (b.monat - a.monat) || (b.nr - a.nr)));
   const liste = h('div', { class: 'liste' });
   if (!alben.length) liste.append(h('p', { class: 'leer', text: 'Noch keine Alben. Lege das erste an.' }));
   for (const a of alben) {

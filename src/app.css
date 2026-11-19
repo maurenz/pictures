@@ -120,7 +120,9 @@ html.fest .ansichten, html.fest .ansicht[data-ansicht="globus"] { height: 100%; 
   height: 58px;
 }
 .eintrag .punkt { justify-self: center; width: 9px; height: 9px; border-radius: 50%; background: var(--schwarz); box-shadow: 0 0 0 4px var(--weiss); transition: background .25s ease; }
-.eintrag .titel { padding-left: 14px; font-size: 26px; font-weight: 300; transition: font-weight .35s ease; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.eintrag .titel { display: flex; flex-direction: column; min-width: 0; padding-left: 14px; font-size: 26px; font-weight: 300; line-height: 1.12; transition: font-weight .35s ease; }
+.eintrag .titel-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.eintrag .titel-ort { margin-top: 2px; font-size: 11px; font-weight: 600; letter-spacing: .06em; line-height: 1.2; color: var(--grau); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .eintrag .monat { font-size: 12px; font-weight: 600; letter-spacing: .12em; color: var(--grau); padding-left: 10px; }
 .eintrag:hover .titel, .eintrag:focus-visible .titel, .eintrag.hervor .titel { font-weight: 700; }
 .eintrag.hervor .punkt { background: var(--orange); }
@@ -150,8 +152,8 @@ html.fest .ansichten, html.fest .ansicht[data-ansicht="globus"] { height: 100%; 
 .globus path { fill: none; stroke: var(--schwarz); stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
 .globus .kugel { stroke: #d4d4d4; stroke-width: 1.4; }
 .globus .land { stroke-width: .8; }
-.globus .laender path { stroke-width: 1.6; fill: rgba(0, 0, 0, 0); pointer-events: visiblePainted; transition: stroke-width .25s ease; }
-.globus .laender path:hover { stroke-width: 2.6; }
+.globus .laender path { stroke-width: .8; fill: #e9e9e9; fill-opacity: 0; transition: fill-opacity 1.2s ease; }
+.globus .laender.gefuellt path { fill-opacity: 1; }
 .globus .zeichnen { stroke-dasharray: 1; stroke-dashoffset: 1; animation: zeichnen 5s cubic-bezier(.45, 0, .25, 1) forwards; }
 .globus.nah svg { overflow: hidden; }
 .punkte { position: absolute; inset: 0; pointer-events: none; }
@@ -165,7 +167,7 @@ html.fest .ansichten, html.fest .ansicht[data-ansicht="globus"] { height: 100%; 
 .gpunkt.zeigt .kern, .gpunkt:focus-visible .kern, .gpunkt.hervor .kern { background: var(--orange); border-color: var(--orange); }
 @media (hover: hover) and (pointer: fine) { .gpunkt:hover .kern { background: var(--orange); border-color: var(--orange); } }
 .gpunkt .glabel { position: absolute; left: 30px; top: 2px; padding: 3px 8px; border-radius: 4px; background: var(--weiss); box-shadow: 0 1px 6px rgba(0, 0, 0, .14); font-size: 12px; font-weight: 600; line-height: 1.3; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .8s ease-in-out; }
-.punkte.alle-namen .glabel, .gpunkt.zeigt .glabel { opacity: 1; }
+.punkte.alle-namen .glabel, .gpunkt.zeigt .glabel { opacity: 1; pointer-events: auto; cursor: pointer; }
 .punkte.alle-namen .glabel { transition-duration: .4s; }
 .gpunkt.hervor .glabel { color: var(--orange); }
 

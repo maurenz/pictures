@@ -178,6 +178,7 @@ if ($aktion === 'daten') {
         'einstellungen' => $db['einstellungen'],
         'naechstesAlbum' => $db['naechstesAlbum'],
         'nummern'       => (object) nummern($db),
+        'reihenfolge'   => array_map(fn($a) => (int) $a['nr'], zeitlich_ordnen($db['alben'])),
         'format'        => bild_format(),
     ]);
 }

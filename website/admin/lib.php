@@ -212,11 +212,88 @@ function album_oeffentlich(array $a): array
     ];
 }
 
+function hat_koord(?array $a): bool
+{
+    return $a !== null && isset($a['ort']['lat'], $a['ort']['lon']) && is_numeric($a['ort']['lat']) && is_numeric($a['ort']['lon']);
+}
+
+/** Entfernung zweier Orte in km */
+function km(array $a, array $b): float
+{
+    $r = M_PI / 180;
+    $dLat = ($b['lat'] - $a['lat']) * $r;
+    $dLon = ($b['lon'] - $a['lon']) * $r;
+    $x = sin($dLat / 2) ** 2 + cos($a['lat'] * $r) * cos($b['lat'] * $r) * sin($dLon / 2) ** 2;
+    return 12742 * asin(min(1, sqrt($x)));
+}
+
+/** Alben eines Monats in die Folge mit dem kürzesten Weg bringen (wie im Zeitstrahl der Website) */
+function beste_folge(array $gruppe, ?array $vor, ?array $nach): array
+{
+    $mit = array_values(array_filter($gruppe, 'hat_koord'));
+    $ohne = array_values(array_filter($gruppe, fn($a) => !hat_koord($a)));
+    if (count($mit) < 2) {
+        return $gruppe;
+    }
+    $kosten = function (array $folge) use ($vor, $nach): float {
+        $k = 0.0;
+        if (hat_koord($vor)) {
+            $k += km($vor['ort'], $folge[0]['ort']);
+        }
+        for ($i = 1; $i < count($folge); $i++) {
+            $k += km($folge[$i - 1]['ort'], $folge[$i]['ort']);
+        }
+        if (hat_koord($nach)) {
+            $k += km($folge[count($folge) - 1]['ort'], $nach['ort']);
+        }
+        return $k;
+    };
+    $beste = $mit;
+    $besteK = $kosten($mit);
+    if (count($mit) <= 7) {
+        $permutieren = function (array $rest, array $bisher) use (&$permutieren, $kosten, &$beste, &$besteK): void {
+            if (!$rest) {
+                $k = $kosten($bisher);
+                if ($k < $besteK - 1e-6) {
+                    $besteK = $k;
+                    $beste = $bisher;
+                }
+                return;
+            }
+            foreach ($rest as $i => $x) {
+                $weiter = $rest;
+                unset($weiter[$i]);
+                $permutieren(array_values($weiter), [...$bisher, $x]);
+            }
+        };
+        $permutieren($mit, []);
+    }
+    return [...$beste, ...$ohne];
+}
+
+/** Alben aufsteigend nach Zeit, innerhalb eines Monats nach kürzestem Weg */
+function zeitlich_ordnen(array $alben): array
+{
+    $auf = array_values($alben);
+    usort($auf, fn($a, $b) => [(int) $a['jahr'], (int) $a['monat'], (int) $a['nr']] <=> [(int) $b['jahr'], (int) $b['monat'], (int) $b['nr']]);
+    $aus = [];
+    for ($i = 0; $i < count($auf);) {
+        $j = $i;
+        while ($j < count($auf) && $auf[$j]['jahr'] == $auf[$i]['jahr'] && $auf[$j]['monat'] == $auf[$i]['monat']) {
+            $j++;
+        }
+        $gruppe = array_slice($auf, $i, $j - $i);
+        $folge = count($gruppe) > 1 ? beste_folge($gruppe, $aus ? $aus[count($aus) - 1] : null, $auf[$j] ?? null) : $gruppe;
+        array_push($aus, ...$folge);
+        $i = $j;
+    }
+    return $aus;
+}
+
 /** Albumnummern in zeitlicher Reihenfolge (ältestes = 1), nur veröffentlichte Alben mit Fotos */
 function nummern(array $db): array
 {
-    $liste = array_values(array_filter($db['alben'], fn($a) => ($a['status'] ?? '') === 'online' && !empty($a['fotos'])));
-    usort($liste, fn($a, $b) => [(int) $a['jahr'], (int) $a['monat'], (int) $a['nr']] <=> [(int) $b['jahr'], (int) $b['monat'], (int) $b['nr']]);
+    $liste = zeitlich_ordnen(array_filter($db['alben'], fn($a) => ($a['status'] ?? '') === 'online' && !empty($a['fotos'])));
     $n = [];
     foreach ($liste as $i => $a) {
         $n[(int) $a['nr']] = $i + 1;
