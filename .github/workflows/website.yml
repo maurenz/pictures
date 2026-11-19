@@ -18,6 +18,10 @@ on:
         description: 'Ausführliches Protokoll (zur Fehlersuche)'
         type: boolean
         default: false
+      zertifikat:
+        description: 'Nur das Zertifikat des FTP-Servers anzeigen (lädt nichts hoch)'
+        type: boolean
+        default: false
 
 concurrency:
   group: website
@@ -41,7 +45,18 @@ jobs:
           test -f website/index.html
           test -f website/admin/api.php
 
+      - name: Zertifikat des FTP-Servers anzeigen
+        if: github.event_name == 'workflow_dispatch' && inputs.zertifikat
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+        run: |
+          FTP_SERVER="${FTP_SERVER#*://}"; FTP_SERVER="${FTP_SERVER%%/*}"
+          echo | timeout 30 openssl s_client -starttls ftp -connect "$FTP_SERVER:21" 2>/dev/null \
+            | openssl x509 -noout -subject -issuer -ext subjectAltName -fingerprint -sha1 -dates
+          echo "Nur Prüfung: es wurde nichts hochgeladen."
+
       - name: lftp installieren
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.zertifikat) }}
         run: sudo apt-get install -y -qq lftp >/dev/null
 
       # Lädt website/ hoch. Ohne --delete: auf dem Server wird nie etwas gelöscht.
@@ -51,6 +66,7 @@ jobs:
       # Abbruch, wenn keine Verbindung besteht oder im Zielordner kein storage/ liegt
       # (dann ist es nicht der Website-Ordner).
       - name: Per FTP hochladen
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.zertifikat) }}
         env:
           FTP_SERVER: ${{ secrets.FTP_SERVER }}
           FTP_BENUTZER: ${{ secrets.FTP_BENUTZER }}
