@@ -48,6 +48,8 @@ jobs:
       # storage/, media/ und data/ sind zusätzlich ausgeschlossen.
       # Das TLS-Zertifikat des Servers wird geprüft: FTP_SERVER muss der Hostname
       # sein, auf den das Zertifikat ausgestellt ist (keine IP-Adresse).
+      # Abbruch, wenn keine Verbindung besteht oder im Zielordner kein storage/ liegt
+      # (dann ist es nicht der Website-Ordner).
       - name: Per FTP hochladen
         env:
           FTP_SERVER: ${{ secrets.FTP_SERVER }}
@@ -64,10 +66,13 @@ jobs:
           lftp -c "$debug
             set ftp:ssl-force true; set ftp:ssl-protect-data true;
             set net:max-retries 3; set net:reconnect-interval-base 5; set net:timeout 30;
+            set cmd:fail-exit yes;
             open --env-password -u \"$FTP_BENUTZER\" \"$FTP_SERVER\";
+            cd \"$FTP_ORDNER\";
+            cls -1d storage;
             mirror --reverse --verbose --no-perms --parallel=2 $probe \
               --exclude-glob .git* \
               --exclude-glob storage/ --exclude-glob media/ --exclude-glob data/ \
               --exclude-glob _technik-test/ --exclude-glob technik-test.php \
-              website/ \"$FTP_ORDNER\""
+              website/ ."
           echo "Fertig."
