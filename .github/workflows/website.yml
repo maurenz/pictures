@@ -57,6 +57,8 @@ jobs:
           PROBELAUF: ${{ github.event_name == 'workflow_dispatch' && inputs.probelauf }}
           AUSFUEHRLICH: ${{ github.event_name == 'workflow_dispatch' && inputs.ausfuehrlich }}
         run: |
+          # nur den Hostnamen verwenden, auch wenn https:// oder ein Pfad eingetragen ist
+          FTP_SERVER="${FTP_SERVER#*://}"; FTP_SERVER="${FTP_SERVER%%/*}"
           probe=""; [ "$PROBELAUF" = "true" ] && probe="--dry-run" && echo "Probelauf: es wird nichts verändert."
           debug=""; [ "$AUSFUEHRLICH" = "true" ] && debug="debug 3;"
           lftp -c "$debug
