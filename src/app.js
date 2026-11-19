@@ -304,6 +304,7 @@ class Globus {
       letzte = jetzt;
       if (this.tiefe === 1 && !this.zieht && !this.anim && !ruhig() && jetzt > this.pauseBis && this.el.offsetParent && !document.hidden) {
         this.rot[0] += dt * 4;
+        if (this.manuell) this.manuellSetzen(false);
         this.render();
       }
       requestAnimationFrame(schleife);
@@ -370,13 +371,21 @@ class Globus {
     this.render();
   }
 
+  /* Von Hand gedreht: alle Punkte gleich mit Namen. Dreht sich der Globus wieder selbst: wechselnde Namen. */
+  manuellSetzen(an) {
+    this.manuell = an;
+    if (this.tiefe !== 1) return;
+    this.punkteEl.classList.toggle('alle-namen', an);
+    if (an) for (const k of this.knoepfe.values()) k.classList.remove('zeigt');
+  }
+
   /* Weltstufe: einzelne Ortsnamen nacheinander weich einblenden, nur sichtbare Punkte */
   namenWechseln() {
     let index = 0;
     const takt = () => {
-      if (this.tiefe === 1 && !ruhig() && this.el.offsetParent && !document.hidden) {
+      if (this.tiefe === 1 && !this.manuell && !ruhig() && this.el.offsetParent && !document.hidden) {
         const cx = this.el.clientWidth / 2, cy = this.el.clientHeight / 2 + this.ty;
-        const grenze = (this.r || cx) * this.skala * 0.7;
+        const grenze = (this.r || cx) * this.skala * 0.85;
         const sichtbar = [...this.knoepfe.values()].filter(k => {
           if (k.classList.contains('hinten')) return false;
           const m = /translate\(([-\d.]+)px, ([-\d.]+)px\)/.exec(k.style.transform);
@@ -525,6 +534,7 @@ class Globus {
         this.gezogen = true;
         this.zieht = true;
         this.el.classList.add('zieht');
+        if (this.tiefe === 1) this.manuellSetzen(true);
         try { this.el.setPointerCapture(e.pointerId); } catch { /* egal */ }
       }
       const k = 90 / (this.r || this.el.clientWidth / 2) / this.skala;
