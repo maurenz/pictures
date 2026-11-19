@@ -1,0 +1,50 @@
+# Foto-Portfolio · Server-Regeln
+
+# Suchmaschinen fernhalten und Sicherheitsangaben
+<IfModule mod_headers.c>
+  Header always set X-Robots-Tag "noindex, nofollow, noarchive, noimageindex"
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set Referrer-Policy "no-referrer"
+  Header always set X-Frame-Options "SAMEORIGIN"
+  Header always set Permissions-Policy "geolocation=(), camera=(), microphone=(), interest-cohort=()"
+  Header always set Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'"
+</IfModule>
+
+Options -Indexes
+
+# Interne Dateien des automatischen Hochladens nicht ausliefern
+<FilesMatch "^\.ftp-deploy-sync-state\.json$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+DirectoryIndex index.html index.php
+
+AddType image/webp .webp
+AddType font/woff2 .woff2
+AddType application/json .json
+AddType application/manifest+json .webmanifest
+
+# Komprimierung
+<IfModule mod_deflate.c>
+  <IfModule mod_filter.c>
+    AddOutputFilterByType DEFLATE text/html text/css application/javascript text/javascript application/json image/svg+xml
+  </IfModule>
+</IfModule>
+
+# Zwischenspeicher im Browser
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType image/webp "access plus 1 year"
+  ExpiresByType image/jpeg "access plus 1 year"
+  ExpiresByType font/woff2 "access plus 1 year"
+  ExpiresByType text/css "access plus 1 hour"
+  ExpiresByType application/javascript "access plus 1 hour"
+  ExpiresByType text/javascript "access plus 1 hour"
+  ExpiresByType application/json "access plus 0 seconds"
+  ExpiresByType text/html "access plus 0 seconds"
+</IfModule>

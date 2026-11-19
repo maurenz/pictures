@@ -1,0 +1,6 @@
+node_modules/
+.DS_Store
+# Inhalte liegen nur auf dem Webspace, nie im Repository
+website/storage/
+website/media/
+website/data/

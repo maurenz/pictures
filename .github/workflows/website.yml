@@ -1,0 +1,60 @@
+# Lädt die Programmdateien der Website per FTP auf den Webspace.
+# Die Inhaltsordner storage/, media/ und data/ werden nie angefasst.
+name: Website hochladen
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - '.github/workflows/website.yml'
+  workflow_dispatch:
+    inputs:
+      probelauf:
+        description: 'Probelauf: nur anzeigen, was hochgeladen würde'
+        type: boolean
+        default: true
+
+concurrency:
+  group: website
+  cancel-in-progress: false
+
+jobs:
+  hochladen:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Code holen
+        uses: actions/checkout@v6
+
+      - name: Sicherheitsprüfung
+        run: |
+          for d in storage media data; do
+            if [ -e "website/$d" ]; then
+              echo "::error::website/$d darf nicht im Repository liegen (Inhalte bleiben nur auf dem Webspace)."
+              exit 1
+            fi
+          done
+          test -f website/index.html
+          test -f website/admin/api.php
+
+      - name: Per FTP hochladen
+        uses: SamKirkland/FTP-Deploy-Action@v4.4.0
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_BENUTZER }}
+          password: ${{ secrets.FTP_PASSWORT }}
+          protocol: ${{ vars.FTP_PROTOKOLL || 'ftps' }}
+          port: 21
+          local-dir: ./website/
+          server-dir: ${{ secrets.FTP_ORDNER || './' }}
+          dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.probelauf }}
+          log-level: standard
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            storage/**
+            media/**
+            data/**
+            _technik-test/**
+            technik-test.php
