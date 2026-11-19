@@ -14,6 +14,10 @@ on:
         description: 'Probelauf: nur anzeigen, was hochgeladen würde'
         type: boolean
         default: true
+      ausfuehrlich:
+        description: 'Ausführliches Protokoll (zur Fehlersuche)'
+        type: boolean
+        default: false
 
 concurrency:
   group: website
@@ -48,7 +52,7 @@ jobs:
           local-dir: ./website/
           server-dir: ${{ secrets.FTP_ORDNER || './' }}
           dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.probelauf }}
-          log-level: standard
+          log-level: ${{ (github.event_name == 'workflow_dispatch' && inputs.ausfuehrlich) && 'verbose' || 'standard' }}
           exclude: |
             **/.git*
             **/.git*/**
