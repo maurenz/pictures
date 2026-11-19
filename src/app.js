@@ -922,6 +922,7 @@ class AlbumAnsicht {
       else if (e.key === 'Escape') { if (this.infoEl && !this.infoEl.hidden) this.infoUm(false); else albumSchliessen(); }
     };
     document.addEventListener('keydown', this.tasten);
+    this.automatikEinrichten();
     this.groesse = () => this.layout();
     addEventListener('resize', this.groesse);
   }
@@ -1241,7 +1242,34 @@ class AlbumAnsicht {
     if (j !== this.i) { this.abschliessen(); this.i = j; this.zeigen(0); }
   }
 
+  /* Nach 10 s ohne Interaktion automatisch weiterblättern, dann alle 5 s, bis zum letzten Bild */
+  automatikEinrichten() {
+    const neuStarten = () => {
+      clearTimeout(this.autoWarten);
+      clearInterval(this.autoTakt);
+      this.autoTakt = null;
+      if (this.i >= this.a.fotos.length - 1) return;
+      this.autoWarten = setTimeout(() => {
+        this.autoSchritt();
+        this.autoTakt = setInterval(() => this.autoSchritt(), 5000);
+      }, 10000);
+    };
+    this.autoNeu = neuStarten;
+    for (const t of ['pointerdown', 'pointermove', 'wheel', 'touchstart']) this.el.addEventListener(t, neuStarten, { passive: true });
+    document.addEventListener('keydown', neuStarten);
+    neuStarten();
+  }
+
+  autoSchritt() {
+    if (document.hidden || this.zoom || this.wechsel || (this.infoEl && !this.infoEl.hidden)) return;
+    if (this.i >= this.a.fotos.length - 1) { clearInterval(this.autoTakt); this.autoTakt = null; return; }
+    this.gehe(1);
+  }
+
   entfernen() {
+    clearTimeout(this.autoWarten);
+    clearInterval(this.autoTakt);
+    document.removeEventListener('keydown', this.autoNeu);
     document.removeEventListener('keydown', this.tasten);
     removeEventListener('resize', this.groesse);
     this.el.remove();

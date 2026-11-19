@@ -55,6 +55,14 @@ jobs:
             | openssl x509 -noout -subject -issuer -ext subjectAltName -fingerprint -sha1 -dates
           echo "Nur Prüfung: es wurde nichts hochgeladen."
 
+      # Versionsnummer an app.js/app.css hängen, damit Browser nach jedem Update
+      # sofort die neue Fassung laden (statt einer zwischengespeicherten)
+      - name: Versionsnummer setzen
+        run: |
+          v="${GITHUB_SHA::7}"
+          sed -i "s/?v=dev/?v=$v/g" website/index.html
+          grep -c "?v=$v" website/index.html
+
       - name: lftp installieren
         if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.zertifikat) }}
         run: sudo apt-get install -y -qq lftp >/dev/null
