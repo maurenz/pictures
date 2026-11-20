@@ -2,6 +2,7 @@
 import { geoOrthographic, geoPath, geoDistance, geoContains, geoCentroid } from 'd3-geo';
 import { feature, merge } from 'topojson-client';
 import ISO from './iso.json';
+import REGIONEN from './regionen.json';
 
 /* ================================================================== */
 /* Grundlagen                                                          */
@@ -320,8 +321,10 @@ class Globus {
     this.svg = svgEl('svg', { 'aria-hidden': 'true' });
     this.kugel = svgEl('path', { class: 'kugel' });
     this.land = svgEl('path', { class: 'land', pathLength: '1' });
+    // Reihenfolge: graue Flächen, grauer Kugelrand, schwarze Linien (Rand bleibt hinter den Konturen sichtbar)
     this.laenderG = svgEl('g', { class: 'laender' });
-    this.svg.append(this.kugel, this.laenderG, this.land);
+    this.grenzenG = svgEl('g', { class: 'grenzen' });
+    this.svg.append(this.laenderG, this.kugel, this.grenzenG, this.land);
     this.punkteEl = h('div', { class: 'punkte' });
     this.el.append(this.svg, this.punkteEl);
     this.knoepfe = new Map();
@@ -357,8 +360,10 @@ class Globus {
     try {
       const t = await (await fetch('assets/geo/land.json')).json();
       this.land110 = teillinien(feature(t, t.objects.land));
-      this.grobeLaender = new Map(feature(t, t.objects.countries).features.map(f => [String(f.id), teilflaechen(f)]));
-      if (this.laenderPfade) for (const lp of this.laenderPfade) lp.t110 = this.grobeLaender.get(String(lp.f.id)) || lp.t;
+      this.grobFeatures = feature(t, t.objects.countries).features;
+      this.grobeLaender = new Map(this.grobFeatures.map(f => [String(f.id), f]));
+      if (this.laenderPfade) for (const lp of this.laenderPfade) this.grobSetzen(lp);
+      this.regionenBilden();
       this.planen();
     } catch { /* ohne Karte */ }
     try {
@@ -397,21 +402,75 @@ class Globus {
         if (!f || gesehen.has(f)) continue;
         gesehen.add(f);
         if (!z.feature) z.feature = f;
-        const p = svgEl('path', this.gezeichnet ? {} : { pathLength: '1' });
+        const p = svgEl('path');
+        const l = svgEl('path', this.gezeichnet ? {} : { pathLength: '1' });
         this.laenderG.append(p);
-        const t = teilflaechen(f);
-        this.laenderPfade.push({ f, p, t, t110: (this.grobeLaender && this.grobeLaender.get(String(f.id))) || t });
+        this.grenzenG.append(l);
+        const lp = { f, p, l, t: teilflaechen(f), lt: teillinien(f) };
+        this.grobSetzen(lp);
+        this.laenderPfade.push(lp);
       }
     }
     if (this.gestartet) this.zeichnenSynchron();
     this.planen();
   }
 
+  /* Mittelpunkt und Ausdehnung der Regionen und Kontinente (aus den groben Länderflächen) */
+  regionenBilden() {
+    const groesster = f => {
+      let best = null;
+      for (const t of teilflaechen(f)) if (!best || t.coords[0].length > best.coords[0].length) best = t;
+      return best;
+    };
+    this.regionen = [];
+    for (const r of REGIONEN) {
+      const punkte = [];
+      for (const id of r.laender) {
+        if (id === '643' && r.laender.length > 1) continue; // Russland verzerrt Europa
+        const f = this.grobeLaender.get(id);
+        const t = f && groesster(f);
+        if (t) punkte.push(...t.coords[0]);
+      }
+      if (punkte.length < 3) continue;
+      const c = geoCentroid({ type: 'MultiPoint', coordinates: punkte });
+      const d = punkte.map(q => geoDistance(c, q)).sort((a, b) => a - b);
+      this.regionen.push({ name: r.name, ebene: r.ebene, c, rad: Math.max(0.05, d[Math.floor(d.length * 0.8)]) });
+    }
+  }
+
+  /* Region oder Kontinent, der den sichtbaren Ausschnitt größtenteils füllt und mittig liegt */
+  regionImBild() {
+    if (!this.regionen || !this.gezoomt) return null;
+    const w = this.el.clientWidth, hh = this.el.clientHeight || w;
+    const R = this.r * this.skala;
+    // mittlerer sichtbarer Winkelradius aus Breite und Höhe des Ausschnitts
+    const v = Math.sqrt(Math.asin(Math.min(1, w / 2 / R)) * Math.asin(Math.min(1, hh / 2 / R)));
+    const mitte = [-this.rot[0], -this.rot[1]];
+    let best = null, wert = Infinity;
+    for (const r of this.regionen) {
+      // die Region füllt den Ausschnitt gut, wenn ihr Radius (80 % der Fläche) etwa 60 % des Sichtradius beträgt
+      const verh = r.rad / v / 0.6;
+      if (verh < 0.45 || verh > 1.8) continue;
+      const ab = geoDistance(mitte, r.c) / Math.max(r.rad, v * 0.6);
+      if (ab > 0.6) continue;
+      // passende Größe, möglichst mittig; eigene Gruppen (z. B. Skandinavien) leicht bevorzugt
+      const g = Math.abs(Math.log(verh)) + ab + ({ gruppe: -0.2, kontinent: 0.05 }[r.ebene] || 0);
+      if (g < wert) { wert = g; best = r; }
+    }
+    return best ? best.name : null;
+  }
+
+  grobSetzen(lp) {
+    const g = this.grobeLaender && this.grobeLaender.get(String(lp.f.id));
+    lp.t110 = g ? teilflaechen(g) : lp.t;
+    lp.lt110 = g ? teillinien(g) : lp.lt;
+  }
+
   zeichnenSynchron() {
     if (this.gezeichnet) return;
     // gleiche Animation wie die Kontinente, bereits verstrichene Zeit überspringen
     const verstrichen = (performance.now() - this.startZeit) / 1000;
-    for (const { p } of this.laenderPfade || []) {
+    for (const { l: p } of this.laenderPfade || []) {
       p.classList.add('zeichnen');
       p.style.animationDelay = `${-verstrichen}s`;
     }
@@ -428,7 +487,7 @@ class Globus {
     setTimeout(() => this.laenderG.classList.add('gefuellt'), ruhig() ? 0 : 4200);
     setTimeout(() => {
       this.gezeichnet = true;
-      for (const p of [this.land, ...(this.laenderPfade || []).map(x => x.p)]) {
+      for (const p of [this.land, ...(this.laenderPfade || []).map(x => x.l)]) {
         p.classList.remove('zeichnen');
         p.removeAttribute('pathLength');
         p.style.animationDelay = '';
@@ -491,7 +550,10 @@ class Globus {
       return { type: typ, coordinates: c };
     };
     if (land) this.land.setAttribute('d', this.glatt(nurSichtbar(land, 'MultiLineString')));
-    if (this.laenderPfade) for (const { p, t, t110 } of this.laenderPfade) p.setAttribute('d', this.glatt(nurSichtbar(fein ? t : t110)));
+    if (this.laenderPfade) for (const { p, l, t, t110, lt, lt110 } of this.laenderPfade) {
+      p.setAttribute('d', this.pfad(nurSichtbar(fein ? t : t110)) || '');
+      l.setAttribute('d', this.glatt(nurSichtbar(fein ? lt : lt110, 'MultiLineString')));
+    }
     // Orte, die weiter als ABSTAND Pixel auseinanderliegen, getrennt zeigen
     const theta = Globus.ABSTAND / (this.r * this.skala);
     if (theta !== this.theta) { this.theta = theta; this.punkteSetzen(this.schnitt(theta)); }
@@ -522,9 +584,10 @@ class Globus {
       const orte = punkte.flatMap(p => p.orte);
       const laender = new Set(orte.map(o => o.land));
       const alben = orte.flatMap(o => o.alben).sort((x, y) => x.rang - y.rang);
-      info = { gezoomt: true, land: laender.size === 1 ? this.punkte.zoom.get([...laender][0]) : null, alben };
+      const land = laender.size === 1 ? this.punkte.zoom.get([...laender][0]) : null;
+      info = { gezoomt: true, land, region: land ? null : this.regionImBild(), alben };
     }
-    const sig = info.gezoomt ? `${info.land ? info.land.land : '-'}|${info.alben.map(a => a.nr).join(',')}` : '';
+    const sig = info.gezoomt ? `${info.land ? info.land.land : '-'}|${info.region || ''}|${info.alben.map(a => a.nr).join(',')}` : '';
     if (sig === this.sicht) return;
     this.sicht = sig;
     this.aktionen.sicht(info);
@@ -936,10 +999,11 @@ function globusAnsichtBauen(alben, punkte) {
   const infoSetzen = s => {
     const liste = s.alben || mitOrt;
     const kinder = [];
-    if (s.land) kinder.push(h('h2', { text: s.land.name }));
+    const titel = s.land ? s.land.name : s.region;
+    if (titel) kinder.push(h('h2', { text: titel }));
     kinder.push(h('p', { class: 'zahl', text: details(liste, !s.land) }));
     app.globusInfo.replaceChildren(...kinder);
-    app.globusInfo.classList.toggle('mit-titel', !!s.land);
+    app.globusInfo.classList.toggle('mit-titel', !!titel);
     titelEinpassen(app.globusInfo.querySelector('h2'));
     app.zurueckKnopf.hidden = !s.gezoomt;
     zeitstrahlFiltern(DESKTOP.matches && s.gezoomt ? s.alben.map(a => a.nr) : null);
