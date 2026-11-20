@@ -214,6 +214,9 @@ if ($aktion === 'album_speichern' && $methode === 'POST') {
             $o = $felder['ort'];
             if ($o !== null && !isset($o['regionen']) && isset($a['ort']['regionen']) && $a['ort']['lat'] == $o['lat'] && $a['ort']['lon'] == $o['lon']) {
                 $felder['ort']['regionen'] = $a['ort']['regionen'];
+                if (!empty($a['ort']['regionenGeprueft'])) {
+                    $felder['ort']['regionenGeprueft'] = 1;
+                }
             }
             $a = array_merge($a, $felder, ['geaendert' => date('c')]);
             return $a;
@@ -416,27 +419,29 @@ if ($aktion === 'ort') {
     antwort(['ok' => true, 'treffer' => $treffer]);
 }
 
-/* Fehlende Regionen still nachtragen: je Aufruf ein Ort, die Verwaltung ruft im Hintergrund wiederholt auf */
+/* Fehlende Regionen still nachtragen: je Aufruf ein Ort, die Verwaltung ruft im Hintergrund wiederholt auf.
+   Leere Ergebnisse der ersten Fassung werden einmal neu abgefragt. */
 if ($aktion === 'regionen_nachtragen' && $methode === 'POST') {
-    $offen = fn(array $db) => array_values(array_filter($db['alben'], fn($a) => hat_koord($a) && !isset($a['ort']['regionen'])));
+    $fehlt = fn(array $a) => hat_koord($a) && (($a['ort']['typ'] ?? '') !== 'land')
+        && (!isset($a['ort']['regionen']) || ($a['ort']['regionen'] === [] && empty($a['ort']['regionenGeprueft'])));
+    $offen = fn(array $db) => array_values(array_filter($db['alben'], $fehlt));
     $liste = $offen(db_lesen());
     if (!$liste) {
         antwort(['ok' => true, 'offen' => 0]);
     }
     $ziel = $liste[0];
-    $regionen = [];
-    if (($ziel['ort']['typ'] ?? '') !== 'land') {
-        $r = nominatim('reverse', ['lat' => $ziel['ort']['lat'], 'lon' => $ziel['ort']['lon'], 'zoom' => 10]);
-        if (!is_array($r)) {
-            antwort(['ok' => true, 'offen' => count($liste), 'fehler' => true]);
-        }
-        $regionen = array_slice(regionen_aus($r['address'] ?? []), 0, 6);
+    $r = nominatim('reverse', ['lat' => $ziel['ort']['lat'], 'lon' => $ziel['ort']['lon'], 'zoom' => 12]);
+    if (!is_array($r) || (!isset($r['address']) && ($r['error'] ?? '') !== 'Unable to geocode')) {
+        // Dienst nicht erreichbar oder gedrosselt: später erneut versuchen, nichts speichern
+        antwort(['ok' => true, 'offen' => count($liste), 'fehler' => true]);
     }
-    $rest = mit_db(function (array &$db) use ($ziel, $regionen, $offen) {
+    $regionen = array_slice(regionen_aus($r['address'] ?? []), 0, 6);
+    $rest = mit_db(function (array &$db) use ($ziel, $regionen, $fehlt, $offen) {
         foreach ($db['alben'] as &$a) {
             // alle Alben mit genau diesen Koordinaten zugleich versorgen
-            if (hat_koord($a) && !isset($a['ort']['regionen']) && $a['ort']['lat'] == $ziel['ort']['lat'] && $a['ort']['lon'] == $ziel['ort']['lon']) {
+            if ($fehlt($a) && $a['ort']['lat'] == $ziel['ort']['lat'] && $a['ort']['lon'] == $ziel['ort']['lon']) {
                 $a['ort']['regionen'] = $regionen;
+                $a['ort']['regionenGeprueft'] = 1;
             }
         }
         unset($a);

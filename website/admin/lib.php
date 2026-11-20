@@ -361,6 +361,7 @@ function ort_bereinigen(mixed $ort): ?array
         'lon'      => round($lon, 5),
     ] + (isset($ort['regionen']) && is_array($ort['regionen'])
         ? ['regionen' => array_values(array_slice(array_filter(array_map(fn($r) => text(is_string($r) ? $r : '', 120), $ort['regionen'])), 0, 6))]
+          + (empty($ort['regionenGeprueft']) ? [] : ['regionenGeprueft' => 1])
         : []);
 }
 

@@ -10,6 +10,8 @@ let t = simp.presimplify(c50);
 t = simp.simplify(t, simp.quantile(t, 0.85));
 t = simp.filter(t, simp.filterWeight(t, simp.quantile(t, 0.02)));
 t.arcs = t.arcs.map(a => a.map(p => [p[0], p[1]])); delete t.bbox; t = topo.quantize(t, 1e5); fs.writeFileSync(out + '/laender.json', JSON.stringify(t));
-const l110 = JSON.parse(fs.readFileSync('node_modules/world-atlas/land-110m.json'));
-fs.writeFileSync(out + '/land.json', JSON.stringify(l110));
+// grobe Karte (Weltansicht): Land und Länder in derselben Detailtiefe
+const c110 = JSON.parse(fs.readFileSync('node_modules/world-atlas/countries-110m.json'));
+for (const g of c110.objects.countries.geometries) delete g.properties;
+fs.writeFileSync(out + '/land.json', JSON.stringify(c110));
 console.log(fs.statSync(out + '/laender.json').size, fs.statSync(out + '/land.json').size);

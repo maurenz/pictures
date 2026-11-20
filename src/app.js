@@ -221,6 +221,22 @@ function teilflaechen(geo) {
     return { coords, c, rad };
   });
 }
+/* Küstenlinien als kurze Linienstücke mit umschließendem Kreis: außerhalb des Bildes entfällt die Rechenarbeit */
+function teillinien(geo, n = 40) {
+  const stuecke = [];
+  for (const { coords } of teilflaechen(geo)) {
+    for (const ring of coords) {
+      for (let i = 0; i < ring.length - 1; i += n) {
+        const st = ring.slice(i, Math.min(ring.length, i + n + 1));
+        const c = geoCentroid({ type: 'MultiPoint', coordinates: st });
+        let rad = 0;
+        for (const q of st) rad = Math.max(rad, geoDistance(c, q));
+        stuecke.push({ coords: st, c, rad });
+      }
+    }
+  }
+  return stuecke;
+}
 const mittel = xs => xs.reduce((s, x) => s + x, 0) / xs.length;
 function mittelLon(xs) {
   const r = Math.PI / 180;
@@ -340,13 +356,15 @@ class Globus {
   async geoLaden() {
     try {
       const t = await (await fetch('assets/geo/land.json')).json();
-      this.land110 = teilflaechen(feature(t, t.objects.land));
+      this.land110 = teillinien(feature(t, t.objects.land));
+      this.grobeLaender = new Map(feature(t, t.objects.countries).features.map(f => [String(f.id), teilflaechen(f)]));
+      if (this.laenderPfade) for (const lp of this.laenderPfade) lp.t110 = this.grobeLaender.get(String(lp.f.id)) || lp.t;
       this.planen();
     } catch { /* ohne Karte */ }
     try {
       const t = await (await fetch('assets/geo/laender.json')).json();
       this.laender = feature(t, t.objects.countries).features;
-      this.land50 = teilflaechen(merge(t, t.objects.countries.geometries));
+      this.land50 = teillinien(merge(t, t.objects.countries.geometries));
       this.relevanteLaender();
     } catch { /* ohne Länder */ }
   }
@@ -381,7 +399,8 @@ class Globus {
         if (!z.feature) z.feature = f;
         const p = svgEl('path', this.gezeichnet ? {} : { pathLength: '1' });
         this.laenderG.append(p);
-        this.laenderPfade.push({ f, p, t: teilflaechen(f) });
+        const t = teilflaechen(f);
+        this.laenderPfade.push({ f, p, t, t110: (this.grobeLaender && this.grobeLaender.get(String(f.id))) || t });
       }
     }
     if (this.gestartet) this.zeichnenSynchron();
@@ -455,21 +474,24 @@ class Globus {
     this.proj.clipExtent(this.skala > 1.05 ? [[-20, -20], [w + 20, hh + 20]] : null);
     const nah = this.skala > 1.05;
     if (nah !== this.istNah) { this.istNah = nah; this.el.classList.toggle('nah', nah); this.namenSetzen(); }
-    this.kugel.setAttribute('d', this.pfad({ type: 'Sphere' }) || '');
-    this.kugel.style.opacity = this.skala > 1.3 ? 0 : 1;
-    // feine Küstenlinien erst, wenn die Bewegung kurz ruht
-    const land = this.skala > 1.6 && this.land50 && this.ruhe !== false ? this.land50 : this.land110;
+    // grauer Rand der Kugel, solange er irgendwo im Bild liegt
+    const randSichtbar = this.r * this.skala < Math.hypot(w / 2, hh / 2 + Math.abs(this.ty)) + 4;
+    this.kugel.setAttribute('d', randSichtbar ? this.pfad({ type: 'Sphere' }) || '' : '');
+    // Länder und Küsten immer in derselben, zum Zoom passenden Detailtiefe
+    const fein = this.skala > 1.6 && !!this.land50;
+    const land = fein ? this.land50 : this.land110;
     // nur Flächen berechnen, die überhaupt im Bild liegen können
     const R = this.r * this.skala, D = Math.hypot(w, hh) / 2 + 24;
     const sicht = D >= R ? Math.PI / 2 : Math.asin(D / R);
     const mitteGeo = [-this.rot[0], -this.rot[1]];
-    const nurSichtbar = teile => {
+    const minRad = 0.6 / R; // kleiner als etwa ein Pixel: weglassen
+    const nurSichtbar = (teile, typ = 'MultiPolygon') => {
       const c = [];
-      for (const t of teile) if (geoDistance(t.c, mitteGeo) - t.rad < sicht + 0.02) c.push(t.coords);
-      return { type: 'MultiPolygon', coordinates: c };
+      for (const t of teile) if (t.rad > minRad && geoDistance(t.c, mitteGeo) - t.rad < sicht + 0.02) c.push(t.coords);
+      return { type: typ, coordinates: c };
     };
-    if (land) this.land.setAttribute('d', this.glatt(nurSichtbar(land)));
-    if (this.laenderPfade) for (const { p, t } of this.laenderPfade) p.setAttribute('d', this.glatt(nurSichtbar(t)));
+    if (land) this.land.setAttribute('d', this.glatt(nurSichtbar(land, 'MultiLineString')));
+    if (this.laenderPfade) for (const { p, t, t110 } of this.laenderPfade) p.setAttribute('d', this.glatt(nurSichtbar(fein ? t : t110)));
     // Orte, die weiter als ABSTAND Pixel auseinanderliegen, getrennt zeigen
     const theta = Globus.ABSTAND / (this.r * this.skala);
     if (theta !== this.theta) { this.theta = theta; this.punkteSetzen(this.schnitt(theta)); }
@@ -734,7 +756,7 @@ class Globus {
   /* Tipp ins Leere: um eine Stufe herauszoomen */
   heraus() {
     if (!this.gezoomt || this.anim) return;
-    const s = this.skala / 2.5;
+    const s = this.skala / 3.75;
     if (s < 1.2) { this.zurWelt(); return; }
     this.animieren(this.rot, s, 0, 700);
   }
