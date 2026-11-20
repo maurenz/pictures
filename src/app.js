@@ -204,7 +204,7 @@ function ortBaum(orte) {
   return k[0] || null;
 }
 /* Flächen in einzelne Polygone mit umschließendem Kreis zerlegen (zum schnellen Aussortieren) */
-function teilflaechen(geo) {
+function teilflaechen(geo, mitStufen = false) {
   const polys = [];
   const add = g => {
     if (!g) return;
@@ -219,7 +219,20 @@ function teilflaechen(geo) {
     const c = geoCentroid({ type: 'MultiPoint', coordinates: coords[0] });
     let rad = 0;
     for (const q of coords[0]) rad = Math.max(rad, geoDistance(c, q));
-    return { coords, c, rad };
+    if (!mitStufen) return { coords, c, rad };
+    // ausgedünnte Ringe für schwächere Zoomstufen (Ringe bleiben geschlossen)
+    let weg = 0;
+    for (let k = 1; k < coords[0].length; k++) weg += geoDistance(coords[0][k - 1], coords[0][k]);
+    const stufen = [coords];
+    for (let schritt = 2; schritt <= 8; schritt *= 2) {
+      stufen.push(coords.map(r => {
+        if (r.length <= 4 * schritt) return r;
+        const d = r.filter((_, k) => k % schritt === 0);
+        d.push(r[r.length - 1]);
+        return d;
+      }));
+    }
+    return { coords, c, rad, stufen, abstand: weg / Math.max(1, coords[0].length - 1) };
   });
 }
 /* Küstenlinien als kurze Linienstücke mit umschließendem Kreis: außerhalb des Bildes entfällt die Rechenarbeit */
@@ -230,13 +243,27 @@ function teillinien(geo, n = 40) {
       for (let i = 0; i < ring.length - 1; i += n) {
         const st = ring.slice(i, Math.min(ring.length, i + n + 1));
         const c = geoCentroid({ type: 'MultiPoint', coordinates: st });
-        let rad = 0;
-        for (const q of st) rad = Math.max(rad, geoDistance(c, q));
-        stuecke.push({ coords: st, c, rad });
+        let rad = 0, weg = 0;
+        for (let k = 0; k < st.length; k++) {
+          rad = Math.max(rad, geoDistance(c, st[k]));
+          if (k) weg += geoDistance(st[k - 1], st[k]);
+        }
+        // ausgedünnte Fassungen (jeder 2., 4., 8. Punkt) für Zoomstufen, in denen Punkte unter einem Pixel lägen
+        const stufen = [st];
+        for (let schritt = 2; schritt <= 8; schritt *= 2) {
+          const d = st.filter((_, k) => k % schritt === 0);
+          if (d[d.length - 1] !== st[st.length - 1]) d.push(st[st.length - 1]);
+          stufen.push(d);
+        }
+        stuecke.push({ coords: st, stufen, abstand: weg / Math.max(1, st.length - 1), c, rad });
       }
     }
   }
   return stuecke;
+}
+/* Flächen samt ihren Linienstücken: am Horizont als geschlossene Fläche, sonst als Linien gezeichnet */
+function kuestenflaechen(geo, n = 40) {
+  return teilflaechen(geo).map(t => ({ ...t, stuecke: teillinien({ type: 'Polygon', coordinates: t.coords }, n) }));
 }
 const mittel = xs => xs.reduce((s, x) => s + x, 0) / xs.length;
 function mittelLon(xs) {
@@ -321,10 +348,18 @@ class Globus {
     this.svg = svgEl('svg', { 'aria-hidden': 'true' });
     this.kugel = svgEl('path', { class: 'kugel' });
     this.land = svgEl('path', { class: 'land', pathLength: '1' });
+    // schwarzer Abschluss der Kontinente am Horizont: grobe Flächen, nur in einem schmalen Ring um den Kugelrand sichtbar
+    const ringId = `horizont-${Math.random().toString(36).slice(2, 8)}`;
+    this.horizontRing = svgEl('path', { 'clip-rule': 'evenodd' });
+    const clip = svgEl('clipPath', { id: ringId });
+    clip.append(this.horizontRing);
+    const defs = svgEl('defs');
+    defs.append(clip);
+    this.horizont = svgEl('path', { class: 'land', pathLength: '1', 'clip-path': `url(#${ringId})` });
     // Reihenfolge: graue Flächen, grauer Kugelrand, schwarze Linien (Rand bleibt hinter den Konturen sichtbar)
     this.laenderG = svgEl('g', { class: 'laender' });
     this.grenzenG = svgEl('g', { class: 'grenzen' });
-    this.svg.append(this.laenderG, this.kugel, this.grenzenG, this.land);
+    this.svg.append(defs, this.laenderG, this.kugel, this.grenzenG, this.land, this.horizont);
     this.punkteEl = h('div', { class: 'punkte' });
     this.el.append(this.svg, this.punkteEl);
     this.knoepfe = new Map();
@@ -359,7 +394,7 @@ class Globus {
   async geoLaden() {
     try {
       const t = await (await fetch('assets/geo/land.json')).json();
-      this.land110 = teillinien(feature(t, t.objects.land));
+      this.land110 = kuestenflaechen(feature(t, t.objects.land));
       this.grobFeatures = feature(t, t.objects.countries).features;
       this.grobeLaender = new Map(this.grobFeatures.map(f => [String(f.id), f]));
       if (this.laenderPfade) for (const lp of this.laenderPfade) this.grobSetzen(lp);
@@ -369,7 +404,7 @@ class Globus {
     try {
       const t = await (await fetch('assets/geo/laender.json')).json();
       this.laender = feature(t, t.objects.countries).features;
-      this.land50 = teillinien(merge(t, t.objects.countries.geometries));
+      this.land50 = kuestenflaechen(merge(t, t.objects.countries.geometries));
       this.relevanteLaender();
     } catch { /* ohne Länder */ }
   }
@@ -406,7 +441,7 @@ class Globus {
         const l = svgEl('path', this.gezeichnet ? {} : { pathLength: '1' });
         this.laenderG.append(p);
         this.grenzenG.append(l);
-        const lp = { f, p, l, t: teilflaechen(f), lt: teillinien(f) };
+        const lp = { f, p, l, t: teilflaechen(f, true), lt: teillinien(f) };
         this.grobSetzen(lp);
         this.laenderPfade.push(lp);
       }
@@ -465,7 +500,7 @@ class Globus {
 
   grobSetzen(lp) {
     const g = this.grobeLaender && this.grobeLaender.get(String(lp.f.id));
-    lp.t110 = g ? teilflaechen(g) : lp.t;
+    lp.t110 = g ? teilflaechen(g, true) : lp.t;
     lp.lt110 = g ? teillinien(g) : lp.lt;
   }
 
@@ -484,13 +519,14 @@ class Globus {
     this.gestartet = true;
     this.startZeit = performance.now();
     this.land.classList.add('zeichnen');
+    this.horizont.classList.add('zeichnen');
     this.zeichnenSynchron();
     // Nach dem Zeichnen die Strichmuster entfernen: spart beim Drehen viel Rechenzeit
     // graue Fläche schon, während die Linien die letzten Millimeter ziehen
     setTimeout(() => this.laenderG.classList.add('gefuellt'), ruhig() ? 0 : 4200);
     setTimeout(() => {
       this.gezeichnet = true;
-      for (const p of [this.land, ...(this.laenderPfade || []).map(x => x.l)]) {
+      for (const p of [this.land, this.horizont, ...(this.laenderPfade || []).map(x => x.l)]) {
         p.classList.remove('zeichnen');
         p.removeAttribute('pathLength');
         p.style.animationDelay = '';
@@ -547,12 +583,38 @@ class Globus {
     const sicht = D >= R ? Math.PI / 2 : Math.asin(D / R);
     const mitteGeo = [-this.rot[0], -this.rot[1]];
     const minRad = 0.6 / R; // kleiner als etwa ein Pixel: weglassen
+    // Detailtiefe passend zum Zoom: so ausdünnen, dass Punkte etwa 2 px auseinanderliegen (feiner sieht man nicht)
+    const lod = st => {
+      const px = st.abstand * R;
+      const stufe = px >= 2 ? 0 : Math.min(3, Math.ceil(Math.log2(2 / Math.max(px, 1e-6))));
+      return st.stufen[stufe];
+    };
     const nurSichtbar = (teile, typ = 'MultiPolygon') => {
       const c = [];
-      for (const t of teile) if (t.rad > minRad && geoDistance(t.c, mitteGeo) - t.rad < sicht + 0.02) c.push(t.coords);
+      for (const t of teile) if (t.rad > minRad && geoDistance(t.c, mitteGeo) - t.rad < sicht + 0.02) c.push(t.stufen ? lod(t) : t.coords);
       return { type: typ, coordinates: c };
     };
-    if (land) this.land.setAttribute('d', this.glatt(nurSichtbar(land, 'MultiLineString')));
+    // Küsten nur als sichtbare Linienstücke (schnell, auch bei feiner Karte)
+    if (land) {
+      const linien = [];
+      for (const t of land) {
+        if (t.rad <= minRad || geoDistance(t.c, mitteGeo) - t.rad >= sicht + 0.02) continue;
+        for (const st of t.stuecke) if (geoDistance(st.c, mitteGeo) - st.rad < sicht + 0.02) linien.push(lod(st));
+      }
+      this.land.setAttribute('d', this.glatt({ type: 'MultiLineString', coordinates: linien }));
+    }
+    // Abschluss am Horizont: grobe Flächen, die über den Rand reichen, geschlossen gezeichnet,
+    // aber nur in einem 2,4 px schmalen Ring um den Rand sichtbar
+    const amRand = [];
+    if (randSichtbar && this.land110) {
+      for (const t of this.land110) {
+        const d = geoDistance(t.c, mitteGeo);
+        if (d + t.rad > Math.PI / 2 - 0.02 && d - t.rad < Math.PI / 2 + 0.02) amRand.push(t.coords);
+      }
+      const cx = w / 2, cy = hh / 2 + this.ty, ring = (rr) => `M${(cx - rr).toFixed(1)},${cy.toFixed(1)}a${rr.toFixed(1)},${rr.toFixed(1)} 0 1,0 ${(2 * rr).toFixed(1)},0a${rr.toFixed(1)},${rr.toFixed(1)} 0 1,0 ${(-2 * rr).toFixed(1)},0Z`;
+      this.horizontRing.setAttribute('d', ring(R + 1.2) + ring(Math.max(0, R - 1.2)));
+    }
+    this.horizont.setAttribute('d', amRand.length ? this.glatt({ type: 'MultiPolygon', coordinates: amRand }) : '');
     if (this.laenderPfade) for (const { p, l, t, t110, lt, lt110 } of this.laenderPfade) {
       p.setAttribute('d', this.pfad(nurSichtbar(fein ? t : t110)) || '');
       l.setAttribute('d', this.glatt(nurSichtbar(fein ? lt : lt110, 'MultiLineString')));
