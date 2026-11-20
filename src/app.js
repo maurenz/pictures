@@ -434,13 +434,15 @@ class Globus {
       if (punkte.length < 3) continue;
       const c = geoCentroid({ type: 'MultiPoint', coordinates: punkte });
       const d = punkte.map(q => geoDistance(c, q)).sort((a, b) => a - b);
-      this.regionen.push({ name: r.name, ebene: r.ebene, c, rad: Math.max(0.05, d[Math.floor(d.length * 0.8)]) });
+      this.regionen.push({ name: r.name, ebene: r.ebene, laender: new Set(r.laender), c, rad: Math.max(0.05, d[Math.floor(d.length * 0.8)]) });
     }
   }
 
   /* Region oder Kontinent, der den sichtbaren Ausschnitt größtenteils füllt und mittig liegt */
-  regionImBild() {
+  regionImBild(orte) {
     if (!this.regionen || !this.gezoomt) return null;
+    // nur Regionen, in denen auch sichtbare Orte liegen
+    const codes = new Set(orte.map(o => ISO[o.land]).filter(Boolean).map(String));
     const w = this.el.clientWidth, hh = this.el.clientHeight || w;
     const R = this.r * this.skala;
     // mittlerer sichtbarer Winkelradius aus Breite und Höhe des Ausschnitts
@@ -448,6 +450,7 @@ class Globus {
     const mitte = [-this.rot[0], -this.rot[1]];
     let best = null, wert = Infinity;
     for (const r of this.regionen) {
+      if (![...codes].some(c => r.laender.has(c))) continue;
       // die Region füllt den Ausschnitt gut, wenn ihr Radius (80 % der Fläche) etwa 60 % des Sichtradius beträgt
       const verh = r.rad / v / 0.6;
       if (verh < 0.45 || verh > 1.8) continue;
@@ -585,7 +588,7 @@ class Globus {
       const laender = new Set(orte.map(o => o.land));
       const alben = orte.flatMap(o => o.alben).sort((x, y) => x.rang - y.rang);
       const land = laender.size === 1 ? this.punkte.zoom.get([...laender][0]) : null;
-      info = { gezoomt: true, land, region: land ? null : this.regionImBild(), alben };
+      info = { gezoomt: true, land, region: land ? null : this.regionImBild(orte), alben };
     }
     const sig = info.gezoomt ? `${info.land ? info.land.land : '-'}|${info.region || ''}|${info.alben.map(a => a.nr).join(',')}` : '';
     if (sig === this.sicht) return;
