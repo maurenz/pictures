@@ -189,7 +189,9 @@ html.fest .ansichten, html.fest .ansicht[data-ansicht="globus"] { height: 100%; 
   background: linear-gradient(to bottom, rgba(255, 255, 255, .9) 0%, rgba(255, 255, 255, .78) 55%, rgba(255, 255, 255, 0) 100%);
   animation: blende .45s ease both;
 }
-.globus-info h2 { margin: 0; padding-bottom: .12em; font-size: 44px; font-weight: 200; letter-spacing: -.035em; line-height: 1.15; white-space: nowrap; overflow: hidden; }
+.globus-info h2 { position: relative; margin: 0; padding-bottom: .12em; font-size: 44px; font-weight: 200; letter-spacing: -.035em; line-height: 1.15; white-space: nowrap; }
+.globus-info h2 .bst { display: inline-block; white-space: pre; }
+.globus-info h2 .titel-alt { position: absolute; left: 0; top: 0; }
 .globus-info p { margin: 0; font-size: 13px; color: var(--grau); }
 
 /* Zurück eine Zoomstufe: unten links wie in der Albumansicht */

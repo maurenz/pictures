@@ -999,15 +999,22 @@ function globusAnsichtBauen(alben, punkte) {
   const mitOrt = alben.filter(a => a.hatOrt);
   app.globusInfo = h('div', { class: 'globus-info' });
   app.zurueckKnopf = h('button', { class: 'icon-knopf globus-zurueck', type: 'button', 'aria-label': 'Zur ganzen Weltkugel', icon: 'links', hidden: true, onclick: () => app.globus.zurWelt() });
+  // feste Bausteine: Überschrift (Land, Region oder leer) und Kennzahlen
+  const titelEl = h('h2', { hidden: true });
+  const zahlEl = h('p', { class: 'zahl' });
+  app.globusInfo.append(titelEl, zahlEl);
+  let titelJetzt = '';
   const infoSetzen = s => {
     const liste = s.alben || mitOrt;
-    const kinder = [];
-    const titel = s.land ? s.land.name : s.region;
-    if (titel) kinder.push(h('h2', { text: titel }));
-    kinder.push(h('p', { class: 'zahl', text: details(liste, !s.land) }));
-    app.globusInfo.replaceChildren(...kinder);
-    app.globusInfo.classList.toggle('mit-titel', !!titel);
-    titelEinpassen(app.globusInfo.querySelector('h2'));
+    const titel = (s.land ? s.land.name : s.region) || '';
+    const text = details(liste, !s.land);
+    if (titel !== titelJetzt) {
+      const dauer = titelWechseln(titelEl, titelJetzt, titel);
+      titelJetzt = titel;
+      if (titel) app.globusInfo.classList.add('mit-titel');
+      else setTimeout(() => { if (!titelJetzt) app.globusInfo.classList.remove('mit-titel'); }, dauer);
+      textWechseln(zahlEl, text, dauer);
+    } else if (zahlEl.textContent !== text) textWechseln(zahlEl, text, 400);
     app.zurueckKnopf.hidden = !s.gezoomt;
     zeitstrahlFiltern(DESKTOP.matches && s.gezoomt ? s.alben.map(a => a.nr) : null);
   };
@@ -1056,6 +1063,62 @@ function blattSchliessen() {
     setTimeout(() => alt.remove(), ruhig() ? 0 : 340);
   }
   if (app.globus) app.globus.hervorheben(null);
+}
+
+/* Überschrift wechseln: das alte Wort blendet Buchstabe für Buchstabe von links nach rechts aus,
+   das neue folgt direkt dahinter im selben Tempo. Gibt die Gesamtdauer in ms zurück. */
+const TITEL_SCHRITT = 35, TITEL_ABSTAND = 140, TITEL_DAUER = 380, TITEL_EASE = 'cubic-bezier(.45, 0, .55, 1)';
+function titelWechseln(el, alt, neu) {
+  const animiert = !ruhig() && typeof el.animate === 'function';
+  if (el.getAnimations) for (const a of el.getAnimations({ subtree: true })) a.cancel();
+  const altGroesse = el.hidden ? '' : getComputedStyle(el).fontSize;
+  el.setAttribute('aria-label', neu);
+  // Größe für das neue Wort bestimmen (passt in eine Zeile)
+  el.hidden = false;
+  el.textContent = neu;
+  if (neu) titelEinpassen(el);
+  if (!animiert || (!alt && !neu)) { el.hidden = !neu; return 0; }
+  el.replaceChildren();
+  const buchstaben = (ziel, wort) => [...wort].map(c => {
+    const b = h('span', { class: 'bst', text: c, 'aria-hidden': 'true' });
+    ziel.append(b);
+    return b;
+  });
+  let ende = 0;
+  if (alt) {
+    const altEl = h('span', { class: 'titel-alt', 'aria-hidden': 'true', style: { fontSize: altGroesse } });
+    el.append(altEl);
+    const bs = buchstaben(altEl, alt);
+    bs.forEach((b, k) => b.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateX(-6px)' }],
+      { duration: TITEL_DAUER, delay: k * TITEL_SCHRITT, easing: TITEL_EASE, fill: 'forwards' }));
+    ende = bs.length * TITEL_SCHRITT + TITEL_DAUER;
+  }
+  if (neu) {
+    const start = alt ? TITEL_ABSTAND : 0;
+    const bs = buchstaben(el, neu);
+    bs.forEach((b, k) => b.animate([{ opacity: 0, transform: 'translateX(6px)' }, { opacity: 1, transform: 'none' }],
+      { duration: TITEL_DAUER, delay: start + k * TITEL_SCHRITT, easing: TITEL_EASE, fill: 'backwards' }));
+    ende = Math.max(ende, start + bs.length * TITEL_SCHRITT + TITEL_DAUER);
+  } else {
+    // ohne neues Wort braucht das alte trotzdem eine Zeile Höhe
+    el.append(h('span', { class: 'bst', text: ' ', 'aria-hidden': 'true' }));
+  }
+  // danach wieder als schlichter Text (saubere Laufweite) bzw. ausblenden
+  const stand = neu;
+  setTimeout(() => {
+    if (el.getAttribute('aria-label') !== stand) return;
+    el.textContent = stand;
+    el.hidden = !stand;
+  }, ende + 20);
+  return ende;
+}
+
+/* Kennzahlen weich austauschen */
+function textWechseln(el, text, dauer) {
+  if (ruhig() || typeof el.animate !== 'function' || !el.textContent) { el.textContent = text; return; }
+  for (const a of el.getAnimations()) a.cancel();
+  el.animate([{ opacity: 1 }, { opacity: 0 }, { opacity: 1 }], { duration: Math.max(400, dauer), easing: TITEL_EASE });
+  setTimeout(() => { el.textContent = text; }, Math.max(400, dauer) / 2);
 }
 
 function titelEinpassen(el) {
