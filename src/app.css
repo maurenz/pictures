@@ -130,8 +130,8 @@ html.fest .ansichten, html.fest .ansicht[data-ansicht="globus"] { height: 100%; 
 .eintrag.hervor .punkt { background: var(--orange); }
 .zeitstrahl .jahr-label, .zeitstrahl .eintrag .punkt, .zeitstrahl .eintrag .titel, .zeitstrahl .eintrag .monat { opacity: 0; }
 .zeitstrahl.laeuft .jahr-label { animation: blende .4s ease-in both; animation-delay: var(--d, 0s); }
-.zeitstrahl.laeuft .eintrag .punkt { animation: punkt-ein .32s cubic-bezier(.3, 1.6, .5, 1) both; animation-delay: var(--d, 0s); }
-.zeitstrahl.laeuft .eintrag .titel, .zeitstrahl.laeuft .eintrag .monat { animation: titel-ein .7s cubic-bezier(.55, 0, 1, .45) both; animation-delay: var(--d, 0s); }
+.zeitstrahl.laeuft .eintrag .punkt, .zeitstrahl.laeuft .eintrag .titel, .zeitstrahl.laeuft .eintrag .monat { animation: titel-ein .6s cubic-bezier(.45, 0, .55, 1) both; animation-delay: var(--d, 0s); }
+.zeitstrahl.laeuft .eintrag .punkt { animation-name: blende; }
 .zeitstrahl.fertig .linie { animation: none; transform: none !important; }
 .zeitstrahl.fertig .jahr-label, .zeitstrahl.fertig .eintrag .punkt, .zeitstrahl.fertig .eintrag .titel, .zeitstrahl.fertig .eintrag .monat { animation: none; opacity: 1; }
 .zeitstrahl.fertig .eintrag { animation: blende .35s ease both; }
@@ -310,7 +310,7 @@ html.fest .ansichten, html.fest .ansicht[data-ansicht="globus"] { height: 100%; 
 @keyframes puls { 0% { transform: scale(.6); opacity: .9; } 80%, 100% { transform: scale(2.6); opacity: 0; } }
 @keyframes linie { from { transform: scaleY(0); } to { transform: scaleY(1); } }
 @keyframes punkt-ein { from { opacity: 0; transform: scale(0); } to { opacity: 1; transform: scale(1); } }
-@keyframes titel-ein { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
+@keyframes titel-ein { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: none; } }
 @keyframes auf { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @keyframes blende { from { opacity: 0; } to { opacity: 1; } }
 @keyframes blatt-raus { from { transform: none; } to { transform: translateY(100%); } }

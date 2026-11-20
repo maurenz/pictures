@@ -829,7 +829,7 @@ function zeitstrahlStarten(el) {
   if (el.classList.contains('laeuft') || !el.offsetParent) return;
   // Die Linie fließt in einem Zug von oben nach unten: sanft anlaufend und sanft auslaufend.
   // Punkt und Titel erscheinen, kurz nachdem die Linie sie erreicht hat.
-  const VORLAUF = 0.14;
+  const VORLAUF = 14; // Pixel, die die Linie dem Eintrag voraus ist, bevor er erscheint
   const teile = [];
   let pos = 0;
   [...el.querySelectorAll('.jahr')].forEach((s, i) => {
@@ -843,7 +843,7 @@ function zeitstrahlStarten(el) {
   for (const { s, start } of teile) {
     s.querySelector('.jahr-label').style.setProperty('--d', `${zeitBei(start).toFixed(3)}s`);
     for (const e of s.querySelectorAll('.eintrag')) {
-      e.style.setProperty('--d', `${(zeitBei(start + e.offsetTop + e.offsetHeight / 2) + VORLAUF).toFixed(3)}s`);
+      e.style.setProperty('--d', `${zeitBei(start + e.offsetTop + e.offsetHeight / 2 + VORLAUF).toFixed(3)}s`);
     }
   }
   el.classList.add('laeuft');
