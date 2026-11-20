@@ -12,7 +12,7 @@ const MONATE = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'A
 const DESKTOP = matchMedia('(min-width: 960px)');
 const RUHIG = matchMedia('(prefers-reduced-motion: reduce)');
 const MAUS = matchMedia('(hover: hover) and (pointer: fine)');
-const TEMPO = 300; // Zeitstrahl: Pixel pro Sekunde
+const TEMPO = 340; // Zeitstrahl: mittlere Pixel pro Sekunde (sanft an- und auslaufend)
 
 const S = 'fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
 const ICON = {
@@ -150,7 +150,7 @@ function exifDatum(s) {
   return m ? `${m[3]}.${m[2]}.${m[1]}` : '';
 }
 
-/* Punkte für den Globus: Land mit mehreren Orten = ein Landpunkt (Zoom), sonst Ortspunkt */
+/* Orte für den Globus (je Land gesammelt) */
 function punkteBilden(alben) {
   const laender = new Map();
   for (const a of alben) {
@@ -158,25 +158,42 @@ function punkteBilden(alben) {
     const lk = a.ort.land || `X${a.nr}`;
     if (!laender.has(lk)) laender.set(lk, { land: lk, name: a.ort.landName || a.ort.name, orte: new Map() });
     const l = laender.get(lk);
-    if (!l.orte.has(a.ortKey)) l.orte.set(a.ortKey, { key: `O:${a.ortKey}`, typ: 'ort', name: a.ort.name, lat: a.ort.lat, lon: a.ort.lon, alben: [] });
+    if (!l.orte.has(a.ortKey)) l.orte.set(a.ortKey, { key: `O:${a.ortKey}`, typ: 'ort', name: a.ort.name, land: lk, landName: l.name, lat: a.ort.lat, lon: a.ort.lon, alben: [] });
     l.orte.get(a.ortKey).alben.push(a);
   }
-  const welt = [];
   const zoom = new Map();
+  const orte = [];
   for (const l of laender.values()) {
-    const orte = [...l.orte.values()];
-    zoom.set(l.land, { ...l, orte });
-    if (orte.length > 1) {
-      const alle = orte.flatMap(o => o.alben);
-      const p = { key: `L:${l.land}`, typ: 'land', land: l.land, name: l.name, lat: mittel(orte.map(o => o.lat)), lon: mittelLon(orte.map(o => o.lon)), alben: alle, orte };
-      welt.push(p);
-      for (const a of alle) a.punkt = p.key;
-    } else {
-      welt.push(orte[0]);
-      for (const a of orte[0].alben) a.punkt = orte[0].key;
-    }
+    const o = [...l.orte.values()];
+    zoom.set(l.land, { ...l, orte: o });
+    orte.push(...o);
   }
-  return { welt, zoom };
+  return { orte, zoom, baum: ortBaum(orte) };
+}
+
+/* Nahe Orte schrittweise zusammenfassen. d = Winkelabstand, ab dem ein Knoten in seine Teile zerfällt */
+function ortBaum(orte) {
+  let k = orte.map(o => Object.assign(o, { d: 0, kinder: null, orte: [o] }));
+  let n = 0;
+  while (k.length > 1) {
+    let best = Infinity, bi = 0, bj = 1;
+    for (let i = 0; i < k.length; i++) for (let j = i + 1; j < k.length; j++) {
+      const d = geoDistance([k[i].lon, k[i].lat], [k[j].lon, k[j].lat]);
+      if (d < best) { best = d; bi = i; bj = j; }
+    }
+    const a = k[bi], b = k[bj];
+    const alle = [...a.orte, ...b.orte];
+    const laender = [...new Set(alle.map(o => o.landName))];
+    k.splice(bj, 1);
+    k[bi] = {
+      key: `G:${n++}`, typ: 'gruppe', kinder: [a, b], orte: alle,
+      d: Math.max(best, a.d, b.d),
+      lat: mittel(alle.map(o => o.lat)), lon: mittelLon(alle.map(o => o.lon)),
+      alben: zeitlichOrdnen(alle.flatMap(o => o.alben)).reverse(),
+      name: laender.length === 1 ? laender[0] : laender.length === 2 ? `${laender[0]}, ${laender[1]}` : `${laender[0]} +${laender.length - 1}`,
+    };
+  }
+  return k[0] || null;
 }
 const mittel = xs => xs.reduce((s, x) => s + x, 0) / xs.length;
 function mittelLon(xs) {
@@ -252,9 +269,10 @@ class Globus {
     this.glaetter = new Glaetter(0.3);
     this.glattPfad = geoPath(this.proj, this.glaetter);
     this.pauseBis = 0;
+    this.aktiv = 0;
     this.gestartet = false;
-    // Zoomstufen: Welt → Gruppe naher Punkte → Land → Gruppe im Land
-    this.stufen = [{ typ: 'welt', punkte: punkte.welt, labels: false, land: null }];
+    this.theta = null;
+    this.sicht = '';
 
     this.el = h('div', { class: 'globus' });
     this.svg = svgEl('svg', { 'aria-hidden': 'true' });
@@ -265,15 +283,13 @@ class Globus {
     this.punkteEl = h('div', { class: 'punkte' });
     this.el.append(this.svg, this.punkteEl);
     this.knoepfe = new Map();
-    this.punkteZeichnen(punkte.welt, false);
 
     new ResizeObserver(() => this.render()).observe(this.el);
     this.ziehenEinrichten();
     this.geoLaden();
   }
 
-  get stufe() { return this.stufen[this.stufen.length - 1]; }
-  get tiefe() { return this.stufen.length; }
+  get gezoomt() { return this.skala > 1.001; }
 
   async geoLaden() {
     try {
@@ -343,9 +359,10 @@ class Globus {
     this.land.classList.add('zeichnen');
     this.zeichnenSynchron();
     // Nach dem Zeichnen die Strichmuster entfernen: spart beim Drehen viel Rechenzeit
+    // graue Fläche schon, während die Linien die letzten Millimeter ziehen
+    setTimeout(() => this.laenderG.classList.add('gefuellt'), ruhig() ? 0 : 4200);
     setTimeout(() => {
       this.gezeichnet = true;
-      this.laenderG.classList.add('gefuellt');
       for (const p of [this.land, ...(this.laenderPfade || []).map(x => x.p)]) {
         p.classList.remove('zeichnen');
         p.removeAttribute('pathLength');
@@ -358,11 +375,14 @@ class Globus {
     const schleife = jetzt => {
       const dt = Math.min(0.05, (jetzt - letzte) / 1000);
       letzte = jetzt;
-      if (this.tiefe === 1 && !this.zieht && !this.anim && !ruhig() && jetzt > this.pauseBis && this.el.offsetParent && !document.hidden) {
+      const sichtbar = this.el.offsetParent && !document.hidden;
+      if (!this.gezoomt && !this.zieht && !this.anim && !ruhig() && jetzt > this.pauseBis && sichtbar) {
         this.rot[0] += dt * 4;
         if (this.manuell) this.manuellSetzen(false);
         this.render();
       }
+      // 10 Sekunden ohne Eingabe: zurück zur ganzen Kugel, danach dreht sie sich wieder
+      if (this.gezoomt && !this.zieht && !this.anim && sichtbar && jetzt - this.aktiv > 10000 && !this.aktionen.blattOffen()) this.zurWelt();
       requestAnimationFrame(schleife);
     };
     requestAnimationFrame(schleife);
@@ -375,28 +395,61 @@ class Globus {
     return Math.min(w * 0.98, hh) / 2 - 6;
   }
 
-  render() {
+  projSetzen() {
     const w = this.el.clientWidth;
     const hh = this.el.clientHeight || w;
-    if (!w) return;
-    const r = this.basisR();
-    this.r = r;
-    this.proj.rotate(this.rot).scale(r * this.skala).translate([w / 2, hh / 2 + this.ty]);
+    this.r = this.basisR();
+    this.proj.rotate(this.rot).scale(this.r * this.skala).translate([w / 2, hh / 2 + this.ty]);
+    return [w, hh];
+  }
+
+  render() {
+    if (!this.el.clientWidth) return;
+    const [w, hh] = this.projSetzen();
     this.proj.clipExtent(this.skala > 1.05 ? [[-20, -20], [w + 20, hh + 20]] : null);
     const nah = this.skala > 1.05;
-    if (nah !== this.istNah) { this.istNah = nah; this.el.classList.toggle('nah', nah); }
+    if (nah !== this.istNah) { this.istNah = nah; this.el.classList.toggle('nah', nah); this.namenSetzen(); }
     this.kugel.setAttribute('d', this.pfad({ type: 'Sphere' }) || '');
     this.kugel.style.opacity = this.skala > 1.3 ? 0 : 1;
     const land = this.skala > 1.6 && this.land50 ? this.land50 : this.land110;
     if (land) this.land.setAttribute('d', this.glatt(land));
     if (this.laenderPfade) for (const { f, p } of this.laenderPfade) p.setAttribute('d', this.glatt(f));
+    // Orte, die weiter als ABSTAND Pixel auseinanderliegen, getrennt zeigen
+    const theta = Globus.ABSTAND / (this.r * this.skala);
+    if (theta !== this.theta) { this.theta = theta; this.punkteSetzen(this.schnitt(theta)); }
     const mitte = [-this.rot[0], -this.rot[1]];
+    const imBild = [];
     for (const [p, knopf] of this.knoepfe) {
       const xy = this.proj([p.lon, p.lat]);
       const hinten = geoDistance([p.lon, p.lat], mitte) > Math.PI / 2 - 0.03;
       knopf.classList.toggle('hinten', hinten || !xy);
       if (xy) knopf.style.transform = `translate(${xy[0].toFixed(1)}px, ${xy[1].toFixed(1)}px)`;
+      if (nah && xy && !hinten && xy[0] > 0 && xy[0] < w && xy[1] > 0 && xy[1] < hh) imBild.push(p);
     }
+    this.sichtMelden(nah ? imBild : null);
+  }
+
+  /* Knoten des Ortsbaums, die beim Winkelabstand theta getrennt erscheinen */
+  schnitt(theta) {
+    const liste = [];
+    const geh = n => { if (!n.kinder || n.d <= theta) liste.push(n); else n.kinder.forEach(geh); };
+    if (this.punkte.baum) geh(this.punkte.baum);
+    return liste;
+  }
+
+  /* Info oben und Zeitstrahl-Filter: sichtbare Alben, Land falls nur eines im Bild ist */
+  sichtMelden(punkte) {
+    let info = { gezoomt: false, land: null, alben: null };
+    if (punkte) {
+      const orte = punkte.flatMap(p => p.orte);
+      const laender = new Set(orte.map(o => o.land));
+      const alben = zeitlichOrdnen(orte.flatMap(o => o.alben)).reverse();
+      info = { gezoomt: true, land: laender.size === 1 ? this.punkte.zoom.get([...laender][0]) : null, alben };
+    }
+    const sig = info.gezoomt ? `${info.land ? info.land.land : '-'}|${info.alben.map(a => a.nr).join(',')}` : '';
+    if (sig === this.sicht) return;
+    this.sicht = sig;
+    this.aktionen.sicht(info);
   }
 
   glatt(geo) {
@@ -404,35 +457,50 @@ class Globus {
     return this.glaetter.ergebnis();
   }
 
-  punkteZeichnen(liste, mitLabel) {
-    this.punkteEl.replaceChildren();
-    this.knoepfe.clear();
-    this.punkteEl.classList.toggle('alle-namen', !!mitLabel);
-    liste.forEach(p => {
-      const knopf = h('button', { class: 'gpunkt', type: 'button', 'aria-label': `${p.name}, ${anzahl(p.alben.length, 'Album', 'Alben')}`, 'data-key': p.key },
-        h('span', { class: 'kern' }),
-        h('span', { class: 'glabel', text: p.name, 'aria-hidden': 'true' }));
-      knopf.addEventListener('click', e => {
-        e.stopPropagation();
-        if (this.gezogen || this.anim) { e.preventDefault(); return; }
-        this.tippen(p);
-      });
-      if (MAUS.matches) {
-        knopf.addEventListener('mouseenter', () => this.aktionen.hover(p));
-        knopf.addEventListener('mouseleave', () => this.aktionen.hover(null));
-      }
-      this.punkteEl.append(knopf);
-      this.knoepfe.set(p, knopf);
+  knopfBauen(p) {
+    const knopf = h('button', { class: 'gpunkt', type: 'button', 'aria-label': `${p.name}, ${anzahl(p.alben.length, 'Album', 'Alben')}`, 'data-key': p.key },
+      h('span', { class: 'kern' }),
+      h('span', { class: 'glabel', text: p.name, 'aria-hidden': 'true' }));
+    knopf.addEventListener('click', e => {
+      e.stopPropagation();
+      if (this.gezogen || this.anim) { e.preventDefault(); return; }
+      this.tippen(p);
     });
-    this.render();
+    if (MAUS.matches) {
+      knopf.addEventListener('mouseenter', () => this.aktionen.hover(p));
+      knopf.addEventListener('mouseleave', () => this.aktionen.hover(null));
+    }
+    return knopf;
+  }
+
+  /* vorhandene Knöpfe behalten, neue weich einblenden, verschwundene entfernen */
+  punkteSetzen(liste) {
+    const neu = new Map();
+    const erstmals = this.knoepfe.size === 0;
+    for (const p of liste) {
+      let k = this.knoepfe.get(p);
+      if (!k) {
+        k = this.knopfBauen(p);
+        if (!erstmals) k.classList.add('neu');
+        this.punkteEl.append(k);
+      }
+      neu.set(p, k);
+    }
+    for (const [p, k] of this.knoepfe) if (!neu.has(p)) k.remove();
+    this.knoepfe = neu;
+    this.hervorheben(this.hervorAlben);
+  }
+
+  namenSetzen() {
+    const alle = this.manuell || this.skala > 1.05;
+    this.punkteEl.classList.toggle('alle-namen', alle);
+    if (alle) for (const k of this.knoepfe.values()) k.classList.remove('zeigt');
   }
 
   /* Von Hand gedreht: alle Punkte gleich mit Namen. Dreht sich der Globus wieder selbst: wechselnde Namen. */
   manuellSetzen(an) {
     this.manuell = an;
-    if (this.tiefe !== 1) return;
-    this.punkteEl.classList.toggle('alle-namen', an);
-    if (an) for (const k of this.knoepfe.values()) k.classList.remove('zeigt');
+    this.namenSetzen();
   }
 
   /* Weltstufe: einzelne Ortsnamen nacheinander weich einblenden, nur sichtbare Punkte */
@@ -441,7 +509,7 @@ class Globus {
     const status = new Map();
     let zuletzt = null;
     const takt = () => {
-      if (this.tiefe === 1 && !this.manuell && !ruhig() && this.el.offsetParent && !document.hidden) {
+      if (!this.gezoomt && !this.manuell && !ruhig() && this.el.offsetParent && !document.hidden) {
         const jetzt = performance.now();
         const cx = this.el.clientWidth / 2, cy = this.el.clientHeight / 2 + this.ty;
         const grenze = (this.r || cx) * this.skala * 0.85;
@@ -475,116 +543,40 @@ class Globus {
     setTimeout(takt, ruhig() ? 0 : 5200);
   }
 
-  /* Ein Punkt wurde angetippt */
+  /* Ein Punkt wurde angetippt: ein Album öffnen, mehrere als Liste */
   tippen(p) {
-    this.hervorheben(null);
-    const nah = this.nachbarn(p);
-    if (nah.length) { this.gruppeZeigen([p, ...nah]); return; }
-    if (p.alben.length === 1) { this.aktionen.album(p.alben[0]); return; }
-    if (p.typ === 'land') { this.landZeigen(p.land); return; }
-    this.aktionen.liste(p);
+    if (p.alben.length === 1) this.aktionen.album(p.alben[0]);
+    else this.aktionen.liste(p);
   }
 
-  /* sichtbare Punkte, die auf dem Bildschirm sehr nah an p liegen */
-  nachbarn(p, abstand = 30) {
-    const a = this.proj([p.lon, p.lat]);
-    if (!a) return [];
-    const mitte = [-this.rot[0], -this.rot[1]];
-    const liste = [];
-    for (const q of this.knoepfe.keys()) {
-      if (q === p || geoDistance([q.lon, q.lat], mitte) > Math.PI / 2 - 0.03) continue;
-      const b = this.proj([q.lon, q.lat]);
-      if (b && Math.hypot(a[0] - b[0], a[1] - b[1]) < abstand) liste.push(q);
+  /* Bildschirmpunkt m (relativ zum Globus) wieder über den Ort geo legen */
+  anker(geo, m) {
+    for (let n = 0; n < 3; n++) {
+      this.projSetzen();
+      const p = this.proj(geo);
+      if (!p) return;
+      const k = 57.2958 / (this.r * this.skala);
+      this.rot = [this.rot[0] + (m[0] - p[0]) * k, Math.max(-85, Math.min(85, this.rot[1] - (m[1] - p[1]) * k))];
     }
-    return liste;
   }
 
-  gruppeZeigen(gruppe) {
-    const s = this.stufe;
-    const alben = [...new Set(gruppe.flatMap(g => g.alben))];
-    this.stufeHinein({ typ: s.land ? 'land' : 'gruppe', punkte: s.punkte, labels: true, land: s.land, alben }, gruppe, this.skala * 1.6, true);
+  /* um den Bildschirmpunkt m auf die Skala s zoomen */
+  zoomen(s, m, geo) {
+    s = Math.max(1, Math.min(Globus.MAX, s));
+    if (!geo) { this.projSetzen(); geo = this.proj.invert(m); }
+    this.skala = s;
+    if (geo && geo.every(Number.isFinite) && geoDistance(geo, [-this.rot[0], -this.rot[1]]) < Math.PI / 2) this.anker(geo, m);
+    this.pauseBis = performance.now() + 3000;
+    this.render();
   }
 
-  landZeigen(code) {
-    const z = this.punkte.zoom.get(code);
-    if (!z) return false;
-    const alben = z.orte.flatMap(o => o.alben);
-    // nur die Punkte des Landes, gezoomt auf diese Punkte (nicht auf das ganze Land)
-    this.stufeHinein({ typ: 'land', punkte: z.orte, labels: true, land: z, alben }, z.orte, this.skala * 1.4);
-    return true;
-  }
-
-  /* Zielansicht, in der alle Fokuspunkte gut getrennt Platz finden */
-  zielFuer(fokus, mindest = 1.5, nurTrennen = false) {
-    const w = this.el.clientWidth || 300;
-    const hh = this.el.clientHeight || w;
-    const oben = this.aktionen.obenFrei();
-    const unten = this.aktionen.untenFrei();
-    const lon = mittelLon(fokus.map(g => g.lon)), lat = mittel(fokus.map(g => g.lat));
-    let rot = [-lon, -lat];
-    const r = this.basisR();
-    let test = geoOrthographic().clipAngle(90).rotate(rot).scale(r).translate([w / 2, hh / 2]);
-    let xy = fokus.map(g => test([g.lon, g.lat])).filter(Boolean);
-    // auf die Mitte des umschließenden Rechtecks zentrieren (nicht auf den Durchschnitt)
-    const mitte = test.invert([(Math.min(...xy.map(q => q[0])) + Math.max(...xy.map(q => q[0]))) / 2, (Math.min(...xy.map(q => q[1])) + Math.max(...xy.map(q => q[1]))) / 2]);
-    if (mitte && mitte.every(Number.isFinite)) {
-      rot = [-mitte[0], -mitte[1]];
-      test = geoOrthographic().clipAngle(90).rotate(rot).scale(r).translate([w / 2, hh / 2]);
-      xy = fokus.map(g => test([g.lon, g.lat])).filter(Boolean);
-    }
-    const xs = xy.map(q => q[0]), ys = xy.map(q => q[1]);
-    const bw = Math.max(...xs) - Math.min(...xs), bh = Math.max(...ys) - Math.min(...ys);
-    const verfW = w * 0.6, verfH = Math.max(80, (hh - oben - unten) * 0.56);
-    let skala = Math.min(verfW / Math.max(bw, 1e-6), verfH / Math.max(bh, 1e-6));
-    if (!Number.isFinite(skala)) skala = 8;
-    if (nurTrennen && xy.length > 1) {
-      // bei nahen Punkten nur so weit zoomen, bis sie gut getrennt sind; die Umgebung bleibt sichtbar
-      let dmin = Infinity;
-      for (let i = 0; i < xy.length; i++) for (let j = i + 1; j < xy.length; j++) dmin = Math.min(dmin, Math.hypot(xy[i][0] - xy[j][0], xy[i][1] - xy[j][1]));
-      skala = Math.min(skala, Math.max(mindest, 95 / Math.max(dmin, 1e-6)));
-    }
-    skala = Math.min(4000, Math.max(mindest, skala));
-    return { rot, skala, ty: (oben - unten) / 2 };
-  }
-
-  async stufeHinein(stufe, fokus, mindest, nurTrennen = false) {
-    if (this.anim) return;
-    const alt = this.stufe;
-    alt.rot = [...this.rot]; alt.skala = this.skala; alt.ty = this.ty;
-    this.stufen.push(stufe);
-    this.aktionen.stufe(stufe, this.tiefe);
-    this.punkteZeichnen(stufe.punkte, stufe.labels);
-    const ziel = this.zielFuer(fokus, mindest, nurTrennen);
-    Object.assign(stufe, ziel);
-    await this.animieren(ziel.rot, ziel.skala, ziel.ty, 1100);
-  }
-
-  /* eine Zoomstufe zurück */
-  async zurueck() {
-    if (this.tiefe < 2 || this.anim) return false;
-    this.stufen.pop();
-    const s = this.stufe;
-    this.aktionen.stufe(s, this.tiefe);
-    this.punkteZeichnen(s.punkte, s.labels);
-    if (this.tiefe === 1) {
-      await this.animieren([this.rot[0], Math.max(-40, Math.min(40, this.rot[1]))], 1, 0, 1000);
-      this.pauseBis = performance.now() + 2500;
-    } else {
-      await this.animieren(s.rot, s.skala, s.ty, 1000);
-    }
-    return true;
-  }
-
-  async zurWelt(sofort = false) {
-    if (this.tiefe < 2) return;
-    this.stufen.length = 1;
-    const s = this.stufe;
-    this.aktionen.stufe(s, 1);
-    this.punkteZeichnen(s.punkte, false);
-    await this.animieren([this.rot[0], Math.max(-40, Math.min(40, this.rot[1]))], 1, 0, sofort ? 1 : 1000);
+  lokal(x, y) {
+    const r = this.el.getBoundingClientRect();
+    return [x - r.left, y - r.top];
   }
 
   hervorheben(alben) {
+    this.hervorAlben = alben;
     for (const [p, knopf] of this.knoepfe) {
       const an = !!alben && alben.length > 0 && p.alben.some(a => alben.includes(a));
       knopf.classList.toggle('hervor', an);
@@ -592,13 +584,43 @@ class Globus {
   }
 
   ziehenEinrichten() {
-    let start = null;
+    const zeiger = new Map();
+    let start = null, pinch = null, warPinch = false;
+    const pinchStart = () => {
+      const [a, b] = [...zeiger.values()];
+      const m = this.lokal((a.x + b.x) / 2, (a.y + b.y) / 2);
+      this.projSetzen();
+      const geo = this.proj.invert(m);
+      pinch = { abstand: Math.max(10, Math.hypot(a.x - b.x, a.y - b.y)), skala: this.skala, geo: geo && geo.every(Number.isFinite) ? geo : null };
+      start = null;
+      warPinch = true;
+      this.gezogen = true;
+      this.zieht = true;
+      this.el.classList.add('zieht');
+    };
     this.el.addEventListener('pointerdown', e => {
       if (e.button > 0) return;
-      start = { x: e.clientX, y: e.clientY, rot: [...this.rot], id: e.pointerId, ziel: e.target };
-      this.gezogen = false;
+      this.aktiv = performance.now();
+      zeiger.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      try { this.el.setPointerCapture(e.pointerId); } catch { /* egal */ }
+      if (zeiger.size === 2 && !this.anim) { pinchStart(); return; }
+      if (zeiger.size === 1) {
+        warPinch = false;
+        start = { x: e.clientX, y: e.clientY, rot: [...this.rot], id: e.pointerId, ziel: e.target };
+        this.gezogen = false;
+      }
     });
     this.el.addEventListener('pointermove', e => {
+      if (!zeiger.has(e.pointerId)) { if (MAUS.matches) this.aktiv = performance.now(); return; }
+      zeiger.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      this.aktiv = performance.now();
+      if (pinch) {
+        if (zeiger.size < 2 || this.anim) return;
+        const [a, b] = [...zeiger.values()];
+        const m = this.lokal((a.x + b.x) / 2, (a.y + b.y) / 2);
+        this.zoomen(pinch.skala * Math.hypot(a.x - b.x, a.y - b.y) / pinch.abstand, m, pinch.geo);
+        return;
+      }
       if (!start || e.pointerId !== start.id) return;
       const dx = e.clientX - start.x, dy = e.clientY - start.y;
       if (!this.gezogen && Math.hypot(dx, dy) < 6) return;
@@ -607,15 +629,27 @@ class Globus {
         this.gezogen = true;
         this.zieht = true;
         this.el.classList.add('zieht');
-        if (this.tiefe === 1) this.manuellSetzen(true);
-        try { this.el.setPointerCapture(e.pointerId); } catch { /* egal */ }
+        if (!this.gezoomt) this.manuellSetzen(true);
       }
       const k = 90 / (this.r || this.el.clientWidth / 2) / this.skala;
       this.rot = [start.rot[0] + dx * k, Math.max(-85, Math.min(85, start.rot[1] - dy * k))];
       this.render();
     });
     const ende = e => {
-      if (!start) return;
+      if (!zeiger.has(e.pointerId)) return;
+      zeiger.delete(e.pointerId);
+      this.aktiv = performance.now();
+      if (pinch) {
+        if (zeiger.size >= 2) { pinchStart(); return; }
+        pinch = null;
+        if (zeiger.size === 1) {
+          // mit dem verbliebenen Finger weiterdrehen
+          const [[id, z]] = [...zeiger.entries()];
+          start = { x: z.x, y: z.y, rot: [...this.rot], id, ziel: null };
+          return;
+        }
+      }
+      if (zeiger.size) return;
       const war = start;
       start = null;
       const gezogen = this.gezogen;
@@ -623,11 +657,47 @@ class Globus {
       this.el.classList.remove('zieht');
       this.pauseBis = performance.now() + 3000;
       setTimeout(() => { this.gezogen = false; }, 0);
-      // Tipp ins Leere: eine Zoomstufe heraus
-      if (e.type === 'pointerup' && !gezogen && !(war.ziel instanceof Element && war.ziel.closest('.gpunkt'))) this.aktionen.leer();
+      // Tipp ins Leere: Liste schließen bzw. etwas herauszoomen
+      if (e.type === 'pointerup' && !gezogen && !warPinch && war && !(war.ziel instanceof Element && war.ziel.closest('.gpunkt'))) this.aktionen.leer();
     };
     this.el.addEventListener('pointerup', ende);
     this.el.addEventListener('pointercancel', ende);
+    // Mausrad und Trackpad (Zwei-Finger-Zoom meldet sich als Rad mit Strg)
+    this.el.addEventListener('wheel', e => {
+      e.preventDefault();
+      this.aktiv = performance.now();
+      if (this.anim) return;
+      const dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);
+      const f = Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.002));
+      this.zoomen(this.skala * f, this.lokal(e.clientX, e.clientY));
+    }, { passive: false });
+  }
+
+  /* Tipp ins Leere: um eine Stufe herauszoomen */
+  heraus() {
+    if (!this.gezoomt || this.anim) return;
+    const s = this.skala / 2.5;
+    if (s < 1.2) { this.zurWelt(); return; }
+    this.animieren(this.rot, s, 0, 700);
+  }
+
+  async zurWelt(sofort = false) {
+    if (!this.gezoomt) return;
+    await this.animieren([this.rot[0], Math.max(-40, Math.min(40, this.rot[1]))], 1, 0, sofort ? 1 : 1400);
+    this.pauseBis = performance.now() + (sofort ? 0 : 1500);
+  }
+
+  /* Direktlink auf ein Land: auf dessen Orte zoomen */
+  landZeigen(code) {
+    const z = this.punkte.zoom.get(code);
+    if (!z || this.anim) return false;
+    const lon = mittelLon(z.orte.map(o => o.lon)), lat = mittel(z.orte.map(o => o.lat));
+    const weite = Math.max(0.02, ...z.orte.map(o => geoDistance([o.lon, o.lat], [lon, lat])));
+    const w = this.el.clientWidth || 300;
+    const s = Math.max(1.6, Math.min(Globus.MAX, (w * 0.32) / (this.basisR() * Math.sin(Math.min(weite, 1.2)))));
+    this.aktiv = performance.now();
+    this.animieren([-lon, -lat], s, 0, 1100);
+    return true;
   }
 
   animieren(zielRot, zielSkala, zielTy = 0, dauer = 1200) {
@@ -652,11 +722,13 @@ class Globus {
   }
 
   drehenZu(p) {
-    if (this.tiefe > 1 || !p || this.anim) return;
+    if (this.gezoomt || !p || this.anim) return;
     this.pauseBis = performance.now() + 4000;
     this.animieren([-p.lon, -p.lat * 0.6], 1, 0, 900);
   }
 }
+Globus.ABSTAND = 28; // Pixel, ab denen zwei Orte getrennt erscheinen
+Globus.MAX = 400;
 
 /* ================================================================== */
 /* Übersicht: Zeitstrahl, Globus, Kontaktbogen                          */
@@ -696,24 +768,39 @@ function zeitstrahlBauen(alben) {
 
 function zeitstrahlStarten(el) {
   if (el.classList.contains('laeuft') || !el.offsetParent) return;
-  // Die Linie fließt gleichmäßig von oben nach unten. Punkt und Titel erscheinen,
-  // kurz nachdem die Linie sie erreicht hat (Linie läuft etwas voraus).
+  // Die Linie fließt in einem Zug von oben nach unten: sanft anlaufend und sanft auslaufend.
+  // Punkt und Titel erscheinen, kurz nachdem die Linie sie erreicht hat.
   const VORLAUF = 0.14;
+  const teile = [];
   let pos = 0;
   [...el.querySelectorAll('.jahr')].forEach((s, i) => {
     if (i) pos += 6;
-    const start = pos, hoehe = s.offsetHeight;
-    const linie = s.querySelector('.linie');
-    linie.style.animationDelay = `${(start / TEMPO).toFixed(3)}s`;
-    linie.style.animationDuration = `${(hoehe / TEMPO).toFixed(3)}s`;
-    s.querySelector('.jahr-label').style.setProperty('--d', `${(start / TEMPO).toFixed(3)}s`);
-    for (const e of s.querySelectorAll('.eintrag')) {
-      const ankunft = (start + e.offsetTop + e.offsetHeight / 2) / TEMPO;
-      e.style.setProperty('--d', `${(ankunft + VORLAUF).toFixed(3)}s`);
-    }
-    pos += hoehe;
+    teile.push({ s, start: pos, hoehe: s.offsetHeight, linie: s.querySelector('.linie') });
+    pos += s.offsetHeight;
   });
+  const gesamt = Math.max(1, pos);
+  const dauer = gesamt / TEMPO;                        // Sekunden
+  const zeitBei = y => dauer * Math.acos(1 - 2 * Math.min(1, y / gesamt)) / Math.PI; // Umkehrung von (1 − cos πt) / 2
+  for (const { s, start } of teile) {
+    s.querySelector('.jahr-label').style.setProperty('--d', `${zeitBei(start).toFixed(3)}s`);
+    for (const e of s.querySelectorAll('.eintrag')) {
+      e.style.setProperty('--d', `${(zeitBei(start + e.offsetTop + e.offsetHeight / 2) + VORLAUF).toFixed(3)}s`);
+    }
+  }
   el.classList.add('laeuft');
+  if (ruhig()) { el.classList.add('fertig'); return; }
+  const t0 = performance.now();
+  const schritt = jetzt => {
+    if (el.classList.contains('fertig')) { for (const t of teile) t.linie.style.transform = ''; return; }
+    const t = Math.min(1, (jetzt - t0) / 1000 / dauer);
+    const y = gesamt * (1 - Math.cos(Math.PI * t)) / 2;
+    for (const { start, hoehe, linie } of teile) {
+      const anteil = Math.max(0, Math.min(1, (y - start) / Math.max(1, hoehe)));
+      linie.style.transform = `scaleY(${anteil.toFixed(4)})`;
+    }
+    if (t < 1) requestAnimationFrame(schritt);
+  };
+  requestAnimationFrame(schritt);
 }
 
 let vorschauEl = null;
@@ -764,31 +851,30 @@ function globusAnsichtBauen(alben, punkte) {
   const el = h('div', { class: 'globus-ansicht' });
   const mitOrt = alben.filter(a => a.hatOrt);
   app.globusInfo = h('div', { class: 'globus-info' });
-  app.zurueckKnopf = h('button', { class: 'icon-knopf globus-zurueck', type: 'button', 'aria-label': 'Eine Zoomstufe zurück', icon: 'links', hidden: true, onclick: () => app.globus.zurueck() });
-  const infoSetzen = (stufe, tiefe) => {
-    const liste = stufe.typ === 'welt' ? mitOrt : stufe.alben;
+  app.zurueckKnopf = h('button', { class: 'icon-knopf globus-zurueck', type: 'button', 'aria-label': 'Zur ganzen Weltkugel', icon: 'links', hidden: true, onclick: () => app.globus.zurWelt() });
+  const infoSetzen = s => {
+    const liste = s.alben || mitOrt;
     const kinder = [];
-    if (stufe.land) kinder.push(h('h2', { text: stufe.land.name }));
-    kinder.push(h('p', { class: 'zahl', text: details(liste, !stufe.land) }));
+    if (s.land) kinder.push(h('h2', { text: s.land.name }));
+    kinder.push(h('p', { class: 'zahl', text: details(liste, !s.land) }));
     app.globusInfo.replaceChildren(...kinder);
-    app.globusInfo.classList.toggle('mit-titel', tiefe > 1);
+    app.globusInfo.classList.toggle('mit-titel', !!s.land);
     titelEinpassen(app.globusInfo.querySelector('h2'));
-    app.zurueckKnopf.hidden = tiefe < 2;
-    zeitstrahlFiltern(DESKTOP.matches && stufe.land ? stufe.alben.map(a => a.nr) : null);
+    app.zurueckKnopf.hidden = !s.gezoomt;
+    zeitstrahlFiltern(DESKTOP.matches && s.gezoomt ? s.alben.map(a => a.nr) : null);
   };
   app.globus = new Globus(punkte, mitOrt[0]?.ort, {
     album: a => { location.hash = `#/album/${a.nr}`; },
     liste: p => blattZeigen(p),
-    stufe: (stufe, tiefe) => { blattSchliessen(); infoSetzen(stufe, tiefe); },
-    leer: () => { if (app.blatt) blattSchliessen(); else app.globus.zurueck(); },
-    obenFrei: () => app.globusInfo.offsetTop + app.globusInfo.offsetHeight - 16,
-    untenFrei: () => (app.zurueckKnopf.hidden ? 12 : 72),
+    sicht: infoSetzen,
+    blattOffen: () => !!app.blatt,
+    leer: () => { if (app.blatt) blattSchliessen(); else app.globus.heraus(); },
     hover: p => {
       app.globus.hervorheben(p ? p.alben : null);
       zeitstrahlHervorheben(p ? p.alben.map(a => a.nr) : [], true);
     },
   });
-  infoSetzen(app.globus.stufe, 1);
+  infoSetzen({ gezoomt: false, land: null, alben: null });
   el.append(app.globus.el, app.globusInfo, app.zurueckKnopf);
   return el;
 }
@@ -864,7 +950,7 @@ app.hoverAlbum = a => {
   if (!a) { app.globus.hervorheben(null); return; }
   app.globus.hervorheben([a]);
   if (a.hatOrt) {
-    const p = app.punkte.welt.find(x => x.key === a.punkt);
+    const p = app.punkte.orte.find(o => o.alben.includes(a));
     if (p) app.globus.drehenZu(p);
   }
 };
@@ -915,7 +1001,7 @@ function ansichtSetzen(neu) {
     if (app.globus && app.globus.el.offsetParent) { app.globus.render(); app.globus.starten(); }
     if (app.bogen && app.bogen.offsetParent) app.bogen.classList.add('laeuft');
   });
-  if (neu !== 'globus' && app.globus && app.globus.tiefe > 1) app.globus.zurWelt(true);
+  if (neu !== 'globus' && app.globus && app.globus.gezoomt) app.globus.zurWelt(true);
 }
 
 /* ================================================================== */
