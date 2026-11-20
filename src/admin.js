@@ -507,6 +507,7 @@ function albumAnsicht(nr) {
       const warOnline = vorhanden && vorhanden.status === 'online';
       syncStand(r.album);
       ungespeichert = false;
+      if (a.ort && !a.ort.regionen) regionenNachtragen();
       if (neu) { meldung('Album erstellt.'); location.hash = `#/album/${r.album.nr}`; return true; }
       try { STAND.nummern = (await api('daten')).nummern; } catch { /* egal */ }
       standZeigen();
@@ -660,6 +661,20 @@ addEventListener('hashchange', () => {
 });
 addEventListener('beforeunload', e => { if (ungespeichert) { if (sofortSpeichern && /^#\/album\/\d+/.test(location.hash)) { sofortSpeichern(); return; } e.preventDefault(); e.returnValue = ''; } });
 
+/* Regionen (übergeordnete Verwaltungsebenen) fehlender Orte still im Hintergrund nachtragen */
+let regionenLaeuft = false;
+async function regionenNachtragen() {
+  if (regionenLaeuft) return;
+  regionenLaeuft = true;
+  try {
+    for (let i = 0; i < 300; i++) {
+      const r = await api('regionen_nachtragen', { daten: {} });
+      if (!r.offen || r.fehler) break;
+    }
+  } catch { /* beim nächsten Laden erneut */ }
+  regionenLaeuft = false;
+}
+
 async function start() {
   try {
     const s = await api('status');
@@ -670,6 +685,7 @@ async function start() {
     STAND = d;
     if (!s.https) meldung('Achtung: Die Verbindung ist nicht verschlüsselt (kein HTTPS).', 'fehler');
     route();
+    setTimeout(regionenNachtragen, 1500);
   } catch (err) {
     seite(h('div', { class: 'login' }, h('h1', { text: 'Fehler' }), h('p', { text: err.message })));
   }

@@ -211,6 +211,10 @@ if ($aktion === 'album_speichern' && $methode === 'POST') {
     $album = mit_db(function (array &$db) use ($nr, $felder) {
         if ($nr > 0) {
             $a = &album_finden($db, $nr);
+            $o = $felder['ort'];
+            if ($o !== null && !isset($o['regionen']) && isset($a['ort']['regionen']) && $a['ort']['lat'] == $o['lat'] && $a['ort']['lon'] == $o['lon']) {
+                $felder['ort']['regionen'] = $a['ort']['regionen'];
+            }
             $a = array_merge($a, $felder, ['geaendert' => date('c')]);
             return $a;
         }
@@ -384,36 +388,7 @@ if ($aktion === 'ort') {
     if (mb_strlen($q) < 2) {
         antwort(['ok' => true, 'treffer' => []]);
     }
-    // Nutzungsregeln von OpenStreetMap: höchstens 1 Anfrage pro Sekunde
-    $sperre = SPEICHER . '/ortssuche.txt';
-    $fh = fopen($sperre, 'c+');
-    if ($fh) {
-        flock($fh, LOCK_EX);
-        $letzte = (float) stream_get_contents($fh);
-        $warten = 1.05 - (microtime(true) - $letzte);
-        if ($warten > 0) {
-            usleep((int) ($warten * 1e6));
-        }
-        ftruncate($fh, 0);
-        rewind($fh);
-        fwrite($fh, (string) microtime(true));
-        flock($fh, LOCK_UN);
-        fclose($fh);
-    }
-    $url = 'https://nominatim.openstreetmap.org/search?' . http_build_query([
-        'format' => 'jsonv2', 'q' => $q, 'limit' => 6, 'addressdetails' => 1, 'accept-language' => 'de',
-    ]);
-    $ua = 'Foto-Portfolio-Verwaltung/1.0 (' . ($_SERVER['HTTP_HOST'] ?? 'privat') . ')';
-    $roh = false;
-    if (function_exists('curl_init')) {
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10, CURLOPT_USERAGENT => $ua]);
-        $roh = curl_exec($ch);
-    } else {
-        $ctx = stream_context_create(['http' => ['header' => "User-Agent: $ua\r\n", 'timeout' => 10]]);
-        $roh = @file_get_contents($url, false, $ctx);
-    }
-    $liste = json_decode((string) $roh, true);
+    $liste = nominatim('search', ['q' => $q, 'limit' => 6]);
     if (!is_array($liste)) {
         fehler('Ortssuche nicht erreichbar.', 502);
     }
@@ -435,9 +410,39 @@ if ($aktion === 'ort') {
             'landName' => (string) ($adr['country'] ?? ''),
             'lat'      => round((float) ($t['lat'] ?? 0), 5),
             'lon'      => round((float) ($t['lon'] ?? 0), 5),
+            'regionen' => $typ === 'land' ? [] : regionen_aus($adr),
         ];
     }
     antwort(['ok' => true, 'treffer' => $treffer]);
+}
+
+/* Fehlende Regionen still nachtragen: je Aufruf ein Ort, die Verwaltung ruft im Hintergrund wiederholt auf */
+if ($aktion === 'regionen_nachtragen' && $methode === 'POST') {
+    $offen = fn(array $db) => array_values(array_filter($db['alben'], fn($a) => hat_koord($a) && !isset($a['ort']['regionen'])));
+    $liste = $offen(db_lesen());
+    if (!$liste) {
+        antwort(['ok' => true, 'offen' => 0]);
+    }
+    $ziel = $liste[0];
+    $regionen = [];
+    if (($ziel['ort']['typ'] ?? '') !== 'land') {
+        $r = nominatim('reverse', ['lat' => $ziel['ort']['lat'], 'lon' => $ziel['ort']['lon'], 'zoom' => 10]);
+        if (!is_array($r)) {
+            antwort(['ok' => true, 'offen' => count($liste), 'fehler' => true]);
+        }
+        $regionen = array_slice(regionen_aus($r['address'] ?? []), 0, 6);
+    }
+    $rest = mit_db(function (array &$db) use ($ziel, $regionen, $offen) {
+        foreach ($db['alben'] as &$a) {
+            // alle Alben mit genau diesen Koordinaten zugleich versorgen
+            if (hat_koord($a) && !isset($a['ort']['regionen']) && $a['ort']['lat'] == $ziel['ort']['lat'] && $a['ort']['lon'] == $ziel['ort']['lon']) {
+                $a['ort']['regionen'] = $regionen;
+            }
+        }
+        unset($a);
+        return count($offen($db));
+    });
+    antwort(['ok' => true, 'offen' => $rest]);
 }
 
 fehler('Unbekannte Aktion.', 404);

@@ -359,7 +359,53 @@ function ort_bereinigen(mixed $ort): ?array
         'landName' => text($ort['landName'] ?? '', 120),
         'lat'      => round($lat, 5),
         'lon'      => round($lon, 5),
-    ];
+    ] + (isset($ort['regionen']) && is_array($ort['regionen'])
+        ? ['regionen' => array_values(array_slice(array_filter(array_map(fn($r) => text(is_string($r) ? $r : '', 120), $ort['regionen'])), 0, 6))]
+        : []);
+}
+
+/** Verwaltungsebenen eines Nominatim-Treffers, vom kleinsten zum größten (ohne Land). Wird nur gespeichert, nicht angezeigt. */
+function regionen_aus(array $adr): array
+{
+    $liste = [];
+    foreach (['city', 'town', 'municipality', 'county', 'state_district', 'state', 'region'] as $ebene) {
+        $n = trim((string) ($adr[$ebene] ?? ''));
+        if ($n !== '' && !in_array($n, $liste, true)) {
+            $liste[] = $n;
+        }
+    }
+    return $liste;
+}
+
+/** Anfrage an Nominatim, höchstens 1 pro Sekunde (Nutzungsregeln von OpenStreetMap) */
+function nominatim(string $pfad, array $parameter): mixed
+{
+    $sperre = SPEICHER . '/ortssuche.txt';
+    $fh = fopen($sperre, 'c+');
+    if ($fh) {
+        flock($fh, LOCK_EX);
+        $letzte = (float) stream_get_contents($fh);
+        $warten = 1.05 - (microtime(true) - $letzte);
+        if ($warten > 0) {
+            usleep((int) ($warten * 1e6));
+        }
+        ftruncate($fh, 0);
+        rewind($fh);
+        fwrite($fh, (string) microtime(true));
+        flock($fh, LOCK_UN);
+        fclose($fh);
+    }
+    $url = 'https://nominatim.openstreetmap.org/' . $pfad . '?' . http_build_query($parameter + ['format' => 'jsonv2', 'addressdetails' => 1, 'accept-language' => 'de']);
+    $ua = 'Foto-Portfolio-Verwaltung/1.0 (' . ($_SERVER['HTTP_HOST'] ?? 'privat') . ')';
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10, CURLOPT_USERAGENT => $ua]);
+        $roh = curl_exec($ch);
+    } else {
+        $ctx = stream_context_create(['http' => ['header' => "User-Agent: $ua\r\n", 'timeout' => 10]]);
+        $roh = @file_get_contents($url, false, $ctx);
+    }
+    return json_decode((string) $roh, true);
 }
 
 function exif_bereinigen(mixed $exif): array

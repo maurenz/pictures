@@ -153,12 +153,13 @@ function exifDatum(s) {
 /* Orte für den Globus (je Land gesammelt) */
 function punkteBilden(alben) {
   const laender = new Map();
+  alben.forEach((a, i) => { a.rang = i; }); // feste Reihenfolge wie im Zeitstrahl
   for (const a of alben) {
     if (!a.hatOrt) continue;
     const lk = a.ort.land || `X${a.nr}`;
     if (!laender.has(lk)) laender.set(lk, { land: lk, name: a.ort.landName || a.ort.name, orte: new Map() });
     const l = laender.get(lk);
-    if (!l.orte.has(a.ortKey)) l.orte.set(a.ortKey, { key: `O:${a.ortKey}`, typ: 'ort', name: a.ort.name, land: lk, landName: l.name, lat: a.ort.lat, lon: a.ort.lon, alben: [] });
+    if (!l.orte.has(a.ortKey)) l.orte.set(a.ortKey, { key: `O:${a.ortKey}`, typ: 'ort', name: a.ort.name, land: lk, landName: l.name, regionen: Array.isArray(a.ort.regionen) ? a.ort.regionen : [], lat: a.ort.lat, lon: a.ort.lon, alben: [] });
     l.orte.get(a.ortKey).alben.push(a);
   }
   const zoom = new Map();
@@ -169,6 +170,12 @@ function punkteBilden(alben) {
     orte.push(...o);
   }
   return { orte, zoom, baum: ortBaum(orte) };
+}
+
+/* kleinste Verwaltungsebene (Stadt, Kreis, Bundesland …), in der alle Orte liegen; sonst null */
+function gemeinsameRegion(orte) {
+  const [erst, ...rest] = orte;
+  return erst.regionen.find(r => rest.every(o => o.regionen.includes(r))) || null;
 }
 
 /* Nahe Orte schrittweise zusammenfassen. d = Winkelabstand, ab dem ein Knoten in seine Teile zerfällt */
@@ -189,11 +196,30 @@ function ortBaum(orte) {
       key: `G:${n++}`, typ: 'gruppe', kinder: [a, b], orte: alle,
       d: Math.max(best, a.d, b.d),
       lat: mittel(alle.map(o => o.lat)), lon: mittelLon(alle.map(o => o.lon)),
-      alben: zeitlichOrdnen(alle.flatMap(o => o.alben)).reverse(),
-      name: laender.length === 1 ? laender[0] : laender.length === 2 ? `${laender[0]}, ${laender[1]}` : `${laender[0]} +${laender.length - 1}`,
+      alben: alle.flatMap(o => o.alben).sort((x, y) => x.rang - y.rang),
+      name: laender.length === 1 ? (gemeinsameRegion(alle) || laender[0]) : laender.length === 2 ? `${laender[0]}, ${laender[1]}` : `${laender[0]} +${laender.length - 1}`,
     };
   }
   return k[0] || null;
+}
+/* Flächen in einzelne Polygone mit umschließendem Kreis zerlegen (zum schnellen Aussortieren) */
+function teilflaechen(geo) {
+  const polys = [];
+  const add = g => {
+    if (!g) return;
+    if (g.type === 'FeatureCollection') g.features.forEach(f => add(f.geometry));
+    else if (g.type === 'Feature') add(g.geometry);
+    else if (g.type === 'GeometryCollection') g.geometries.forEach(add);
+    else if (g.type === 'Polygon') polys.push(g.coordinates);
+    else if (g.type === 'MultiPolygon') g.coordinates.forEach(c => polys.push(c));
+  };
+  add(geo);
+  return polys.map(coords => {
+    const c = geoCentroid({ type: 'MultiPoint', coordinates: coords[0] });
+    let rad = 0;
+    for (const q of coords[0]) rad = Math.max(rad, geoDistance(c, q));
+    return { coords, c, rad };
+  });
 }
 const mittel = xs => xs.reduce((s, x) => s + x, 0) / xs.length;
 function mittelLon(xs) {
@@ -284,23 +310,43 @@ class Globus {
     this.el.append(this.svg, this.punkteEl);
     this.knoepfe = new Map();
 
-    new ResizeObserver(() => this.render()).observe(this.el);
+    new ResizeObserver(() => this.planen()).observe(this.el);
     this.ziehenEinrichten();
     this.geoLaden();
   }
 
   get gezoomt() { return this.skala > 1.001; }
 
+  /* Neu zeichnen im nächsten Bild, höchstens 60-mal pro Sekunde (auch auf 120-Hz-Bildschirmen) */
+  planen() {
+    this.schmutzig = true;
+    if (this.raf) return;
+    const tick = t => {
+      if (t - (this.zuletztGezeichnet || 0) < 15.5) { this.raf = requestAnimationFrame(tick); return; }
+      this.raf = 0;
+      this.zuletztGezeichnet = t;
+      if (this.schmutzig) { this.schmutzig = false; this.render(); }
+    };
+    this.raf = requestAnimationFrame(tick);
+  }
+
+  /* kurz nach dem Ende einer Bewegung: feine Karte und Infozeile nachziehen */
+  beruhigt() {
+    clearTimeout(this.ruheTimer);
+    this.ruheTimer = setTimeout(() => { this.ruhe = true; this.planen(); }, 180);
+    this.ruhe = false;
+  }
+
   async geoLaden() {
     try {
       const t = await (await fetch('assets/geo/land.json')).json();
-      this.land110 = feature(t, t.objects.land);
-      this.render();
+      this.land110 = teilflaechen(feature(t, t.objects.land));
+      this.planen();
     } catch { /* ohne Karte */ }
     try {
       const t = await (await fetch('assets/geo/laender.json')).json();
       this.laender = feature(t, t.objects.countries).features;
-      this.land50 = merge(t, t.objects.countries.geometries);
+      this.land50 = teilflaechen(merge(t, t.objects.countries.geometries));
       this.relevanteLaender();
     } catch { /* ohne Länder */ }
   }
@@ -335,11 +381,11 @@ class Globus {
         if (!z.feature) z.feature = f;
         const p = svgEl('path', this.gezeichnet ? {} : { pathLength: '1' });
         this.laenderG.append(p);
-        this.laenderPfade.push({ f, p });
+        this.laenderPfade.push({ f, p, t: teilflaechen(f) });
       }
     }
     if (this.gestartet) this.zeichnenSynchron();
-    this.render();
+    this.planen();
   }
 
   zeichnenSynchron() {
@@ -379,7 +425,7 @@ class Globus {
       if (!this.gezoomt && !this.zieht && !this.anim && !ruhig() && jetzt > this.pauseBis && sichtbar) {
         this.rot[0] += dt * 4;
         if (this.manuell) this.manuellSetzen(false);
-        this.render();
+        this.planen();
       }
       // 10 Sekunden ohne Eingabe: zurück zur ganzen Kugel, danach dreht sie sich wieder
       if (this.gezoomt && !this.zieht && !this.anim && sichtbar && jetzt - this.aktiv > 10000 && !this.aktionen.blattOffen()) this.zurWelt();
@@ -411,9 +457,19 @@ class Globus {
     if (nah !== this.istNah) { this.istNah = nah; this.el.classList.toggle('nah', nah); this.namenSetzen(); }
     this.kugel.setAttribute('d', this.pfad({ type: 'Sphere' }) || '');
     this.kugel.style.opacity = this.skala > 1.3 ? 0 : 1;
-    const land = this.skala > 1.6 && this.land50 ? this.land50 : this.land110;
-    if (land) this.land.setAttribute('d', this.glatt(land));
-    if (this.laenderPfade) for (const { f, p } of this.laenderPfade) p.setAttribute('d', this.glatt(f));
+    // feine Küstenlinien erst, wenn die Bewegung kurz ruht
+    const land = this.skala > 1.6 && this.land50 && this.ruhe !== false ? this.land50 : this.land110;
+    // nur Flächen berechnen, die überhaupt im Bild liegen können
+    const R = this.r * this.skala, D = Math.hypot(w, hh) / 2 + 24;
+    const sicht = D >= R ? Math.PI / 2 : Math.asin(D / R);
+    const mitteGeo = [-this.rot[0], -this.rot[1]];
+    const nurSichtbar = teile => {
+      const c = [];
+      for (const t of teile) if (geoDistance(t.c, mitteGeo) - t.rad < sicht + 0.02) c.push(t.coords);
+      return { type: 'MultiPolygon', coordinates: c };
+    };
+    if (land) this.land.setAttribute('d', this.glatt(nurSichtbar(land)));
+    if (this.laenderPfade) for (const { p, t } of this.laenderPfade) p.setAttribute('d', this.glatt(nurSichtbar(t)));
     // Orte, die weiter als ABSTAND Pixel auseinanderliegen, getrennt zeigen
     const theta = Globus.ABSTAND / (this.r * this.skala);
     if (theta !== this.theta) { this.theta = theta; this.punkteSetzen(this.schnitt(theta)); }
@@ -426,7 +482,7 @@ class Globus {
       if (xy) knopf.style.transform = `translate(${xy[0].toFixed(1)}px, ${xy[1].toFixed(1)}px)`;
       if (nah && xy && !hinten && xy[0] > 0 && xy[0] < w && xy[1] > 0 && xy[1] < hh) imBild.push(p);
     }
-    this.sichtMelden(nah ? imBild : null);
+    if (this.ruhe !== false) this.sichtMelden(nah ? imBild : null);
   }
 
   /* Knoten des Ortsbaums, die beim Winkelabstand theta getrennt erscheinen */
@@ -443,7 +499,7 @@ class Globus {
     if (punkte) {
       const orte = punkte.flatMap(p => p.orte);
       const laender = new Set(orte.map(o => o.land));
-      const alben = zeitlichOrdnen(orte.flatMap(o => o.alben)).reverse();
+      const alben = orte.flatMap(o => o.alben).sort((x, y) => x.rang - y.rang);
       info = { gezoomt: true, land: laender.size === 1 ? this.punkte.zoom.get([...laender][0]) : null, alben };
     }
     const sig = info.gezoomt ? `${info.land ? info.land.land : '-'}|${info.alben.map(a => a.nr).join(',')}` : '';
@@ -567,7 +623,8 @@ class Globus {
     this.skala = s;
     if (geo && geo.every(Number.isFinite) && geoDistance(geo, [-this.rot[0], -this.rot[1]]) < Math.PI / 2) this.anker(geo, m);
     this.pauseBis = performance.now() + 3000;
-    this.render();
+    this.beruhigt();
+    this.planen();
   }
 
   lokal(x, y) {
@@ -633,7 +690,8 @@ class Globus {
       }
       const k = 90 / (this.r || this.el.clientWidth / 2) / this.skala;
       this.rot = [start.rot[0] + dx * k, Math.max(-85, Math.min(85, start.rot[1] - dy * k))];
-      this.render();
+      this.beruhigt();
+      this.planen();
     });
     const ende = e => {
       if (!zeiger.has(e.pointerId)) return;
@@ -713,7 +771,8 @@ class Globus {
         this.rot = [vonRot[0] + dl * e, vonRot[1] + (zielRot[1] - vonRot[1]) * e];
         this.skala = vonSkala * Math.pow(zielSkala / vonSkala, e);
         this.ty = vonTy + (zielTy - vonTy) * e;
-        this.render();
+        this.beruhigt();
+        this.planen();
         if (t < 1) requestAnimationFrame(schritt);
         else { this.anim = false; fertig(); }
       };
@@ -882,9 +941,13 @@ function globusAnsichtBauen(alben, punkte) {
 function blattZeigen(p) {
   blattSchliessen();
   const liste = h('div', { class: 'blatt-liste' });
+  let jahr = null;
   for (const a of p.alben) {
+    // Jahreszahl wie im Zeitstrahl nur beim obersten Album eines Jahres
+    const neuesJahr = a.jahr !== jahr;
+    jahr = a.jahr;
     liste.append(h('a', { class: 'eintrag', href: `#/album/${a.nr}`, 'aria-label': `${a.titel}, ${a.monatLang} ${a.jahr}` },
-      h('span', { class: 'jahrzahl zahl', text: String(a.jahr) }),
+      h('span', { class: 'jahrzahl zahl', text: neuesJahr ? String(a.jahr) : '' }),
       h('span', { class: 'punkt', 'aria-hidden': 'true' }),
       titelBlock(a),
       h('span', { class: 'monat', text: a.mon, 'aria-hidden': 'true' })));
