@@ -355,7 +355,10 @@ class Globus {
     clip.append(this.horizontRing);
     const defs = svgEl('defs');
     defs.append(clip);
-    this.horizont = svgEl('path', { class: 'land', pathLength: '1', 'clip-path': `url(#${ringId})` });
+    this.horizont = svgEl('path', { class: 'horizont', 'clip-path': `url(#${ringId})` });
+    // eigene Projektion mit feiner Unterteilung, damit der Abschluss exakt auf dem Kugelrand liegt
+    this.projH = geoOrthographic().clipAngle(90).precision(0.1);
+    this.pfadH = geoPath(this.projH);
     // Reihenfolge: graue Flächen, grauer Kugelrand, schwarze Linien (Rand bleibt hinter den Konturen sichtbar)
     this.laenderG = svgEl('g', { class: 'laender' });
     this.grenzenG = svgEl('g', { class: 'grenzen' });
@@ -519,14 +522,13 @@ class Globus {
     this.gestartet = true;
     this.startZeit = performance.now();
     this.land.classList.add('zeichnen');
-    this.horizont.classList.add('zeichnen');
     this.zeichnenSynchron();
     // Nach dem Zeichnen die Strichmuster entfernen: spart beim Drehen viel Rechenzeit
     // graue Fläche schon, während die Linien die letzten Millimeter ziehen
-    setTimeout(() => this.laenderG.classList.add('gefuellt'), ruhig() ? 0 : 4200);
+    setTimeout(() => { this.laenderG.classList.add('gefuellt'); this.horizont.classList.add('an'); }, ruhig() ? 0 : 4200);
     setTimeout(() => {
       this.gezeichnet = true;
-      for (const p of [this.land, this.horizont, ...(this.laenderPfade || []).map(x => x.l)]) {
+      for (const p of [this.land, ...(this.laenderPfade || []).map(x => x.l)]) {
         p.classList.remove('zeichnen');
         p.removeAttribute('pathLength');
         p.style.animationDelay = '';
@@ -603,18 +605,19 @@ class Globus {
       }
       this.land.setAttribute('d', this.glatt({ type: 'MultiLineString', coordinates: linien }));
     }
-    // Abschluss am Horizont: grobe Flächen, die über den Rand reichen, geschlossen gezeichnet,
-    // aber nur in einem 2,4 px schmalen Ring um den Rand sichtbar
+    // Abschluss am Horizont: Landflächen, die über den Rand reichen, schwarz gefüllt –
+    // sichtbar nur in einem 0,8 px schmalen Ring genau auf dem Kugelrand (wie eine Linie, aber ohne Küstenstücke)
     const amRand = [];
     if (randSichtbar && this.land110) {
       for (const t of this.land110) {
         const d = geoDistance(t.c, mitteGeo);
         if (d + t.rad > Math.PI / 2 - 0.02 && d - t.rad < Math.PI / 2 + 0.02) amRand.push(t.coords);
       }
-      const cx = w / 2, cy = hh / 2 + this.ty, ring = (rr) => `M${(cx - rr).toFixed(1)},${cy.toFixed(1)}a${rr.toFixed(1)},${rr.toFixed(1)} 0 1,0 ${(2 * rr).toFixed(1)},0a${rr.toFixed(1)},${rr.toFixed(1)} 0 1,0 ${(-2 * rr).toFixed(1)},0Z`;
-      this.horizontRing.setAttribute('d', ring(R + 1.2) + ring(Math.max(0, R - 1.2)));
+      const cx = w / 2, cy = hh / 2 + this.ty, ring = rr => `M${(cx - rr).toFixed(2)},${cy.toFixed(2)}a${rr.toFixed(2)},${rr.toFixed(2)} 0 1,0 ${(2 * rr).toFixed(2)},0a${rr.toFixed(2)},${rr.toFixed(2)} 0 1,0 ${(-2 * rr).toFixed(2)},0Z`;
+      this.horizontRing.setAttribute('d', ring(R + 0.4) + ring(Math.max(0, R - 0.4)));
+      this.projH.rotate(this.rot).scale(R).translate([cx, cy]);
     }
-    this.horizont.setAttribute('d', amRand.length ? this.glatt({ type: 'MultiPolygon', coordinates: amRand }) : '');
+    this.horizont.setAttribute('d', amRand.length ? this.pfadH({ type: 'MultiPolygon', coordinates: amRand }) || '' : '');
     if (this.laenderPfade) for (const { p, l, t, t110, lt, lt110 } of this.laenderPfade) {
       p.setAttribute('d', this.pfad(nurSichtbar(fein ? t : t110)) || '');
       l.setAttribute('d', this.glatt(nurSichtbar(fein ? lt : lt110, 'MultiLineString')));
