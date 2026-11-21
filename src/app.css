@@ -183,18 +183,18 @@ html.fest .ansichten, html.fest .ansicht[data-ansicht="globus"] { height: 100%; 
 .globus-info {
   position: absolute; z-index: 3; left: 0; right: 0; top: 0;
   display: flex; flex-direction: column; gap: 2px;
-  padding: 2px var(--rand) 10px;
+  padding: 2px var(--rand) 34px;
   pointer-events: none;
+  /* immer gleich hoch; oben voll weiß, nach unten weich auslaufend */
+  background: linear-gradient(to bottom,
+    rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, .98) 18%, rgba(255, 255, 255, .93) 34%, rgba(255, 255, 255, .84) 48%,
+    rgba(255, 255, 255, .7) 60%, rgba(255, 255, 255, .52) 71%, rgba(255, 255, 255, .33) 81%, rgba(255, 255, 255, .16) 90%, rgba(255, 255, 255, .05) 96%, rgba(255, 255, 255, 0) 100%);
 }
-.globus-info.mit-titel {
-  padding-bottom: 34px;
-  background: linear-gradient(to bottom, rgba(255, 255, 255, .9) 0%, rgba(255, 255, 255, .78) 55%, rgba(255, 255, 255, 0) 100%);
-  animation: blende .45s ease both;
-}
-.globus-info h2 { position: relative; margin: 0; padding-bottom: .12em; font-size: 44px; font-weight: 200; letter-spacing: -.035em; line-height: 1.15; white-space: nowrap; }
-.globus-info h2 .bst { display: inline-block; white-space: pre; }
-.globus-info h2 .titel-alt { position: absolute; left: 0; top: 0; }
+/* Kennzahlen oben (stehen immer), darunter der Titel mit fester Höhe – nichts springt */
 .globus-info p { margin: 0; font-size: 13px; color: var(--grau); }
+.globus-info h2 { position: relative; height: 56px; margin: 0; font-size: 44px; font-weight: 200; letter-spacing: -.035em; line-height: 1.15; white-space: nowrap; }
+.globus-info h2 .titel-ebene { position: absolute; inset: 0; }
+.globus-info h2 .titel-ebene span { position: absolute; top: 0; white-space: pre; }
 
 /* Zurück eine Zoomstufe: unten links wie in der Albumansicht */
 .globus-zurueck { position: absolute; z-index: 4; left: 10px; bottom: calc(24px + env(safe-area-inset-bottom)); animation: blende .3s ease both; }

@@ -540,14 +540,21 @@ class Globus {
     const schleife = jetzt => {
       const dt = Math.min(0.05, (jetzt - letzte) / 1000);
       letzte = jetzt;
-      const sichtbar = this.el.offsetParent && !document.hidden;
-      if (!this.gezoomt && !this.zieht && !this.anim && !ruhig() && jetzt > this.pauseBis && sichtbar) {
+      const sichtbar = this.el.offsetParent && !document.hidden && !this.aktionen.verdeckt();
+      const ruhe = jetzt - this.aktiv;
+      const liste = this.aktionen.blattOffen();
+      // Eigendrehung: sonst kurz nach der letzten Eingabe, bei offener Liste erst nach 10 Sekunden
+      if (!this.gezoomt && !this.zieht && !this.anim && !ruhig() && jetzt > this.pauseBis && sichtbar && (!liste || ruhe > 10000)) {
+        if (liste) this.aktionen.abwaehlen(); // Ort abwählen, sobald die Drehung beginnt
         this.rot[0] += dt * 4;
         if (this.manuell) this.manuellSetzen(false);
         this.planen();
       }
-      // 10 Sekunden ohne Eingabe: zurück zur ganzen Kugel, danach dreht sie sich wieder
-      if (this.gezoomt && !this.zieht && !this.anim && sichtbar && jetzt - this.aktiv > 10000 && !this.aktionen.blattOffen()) this.zurWelt();
+      // 10 Sekunden ohne Eingabe: zurück zur ganzen Kugel (Ort abwählen), danach dreht sie sich wieder
+      if (this.gezoomt && !this.zieht && !this.anim && sichtbar && ruhe > 10000) {
+        if (liste) this.aktionen.abwaehlen();
+        this.zurWelt();
+      }
       requestAnimationFrame(schleife);
     };
     requestAnimationFrame(schleife);
@@ -606,7 +613,7 @@ class Globus {
       this.land.setAttribute('d', this.glatt({ type: 'MultiLineString', coordinates: linien }));
     }
     // Abschluss am Horizont: Landflächen, die über den Rand reichen, schwarz gefüllt –
-    // sichtbar nur in einem 0,8 px schmalen Ring genau auf dem Kugelrand (wie eine Linie, aber ohne Küstenstücke)
+    // sichtbar nur in einem 0,8 px schmalen Ring mittig auf dem Kugelrand (so stark wie die Küstenlinien, ohne Küstenstücke)
     const amRand = [];
     if (randSichtbar && this.land110) {
       for (const t of this.land110) {
@@ -615,7 +622,7 @@ class Globus {
       }
       const cx = w / 2, cy = hh / 2 + this.ty, ring = rr => `M${(cx - rr).toFixed(2)},${cy.toFixed(2)}a${rr.toFixed(2)},${rr.toFixed(2)} 0 1,0 ${(2 * rr).toFixed(2)},0a${rr.toFixed(2)},${rr.toFixed(2)} 0 1,0 ${(-2 * rr).toFixed(2)},0Z`;
       this.horizontRing.setAttribute('d', ring(R + 0.4) + ring(Math.max(0, R - 0.4)));
-      this.projH.rotate(this.rot).scale(R).translate([cx, cy]);
+      this.projH.rotate(this.rot).scale(R + 0.4).translate([cx, cy]); // Rand der Fläche reicht bis zur Außenkante des Rings
     }
     this.horizont.setAttribute('d', amRand.length ? this.pfadH({ type: 'MultiPolygon', coordinates: amRand }) || '' : '');
     if (this.laenderPfade) for (const { p, l, t, t110, lt, lt110 } of this.laenderPfade) {
@@ -1065,9 +1072,9 @@ function globusAnsichtBauen(alben, punkte) {
   app.globusInfo = h('div', { class: 'globus-info' });
   app.zurueckKnopf = h('button', { class: 'icon-knopf globus-zurueck', type: 'button', 'aria-label': 'Zur ganzen Weltkugel', icon: 'links', hidden: true, onclick: () => app.globus.zurWelt() });
   // feste Bausteine: Überschrift (Land, Region oder leer) und Kennzahlen
-  const titelEl = h('h2', { hidden: true });
+  const titelEl = h('h2');
   const zahlEl = h('p', { class: 'zahl' });
-  app.globusInfo.append(titelEl, zahlEl);
+  app.globusInfo.append(zahlEl, titelEl);
   let titelJetzt = '';
   const infoSetzen = s => {
     const liste = s.alben || mitOrt;
@@ -1076,8 +1083,6 @@ function globusAnsichtBauen(alben, punkte) {
     if (titel !== titelJetzt) {
       const dauer = titelWechseln(titelEl, titelJetzt, titel);
       titelJetzt = titel;
-      if (titel) app.globusInfo.classList.add('mit-titel');
-      else setTimeout(() => { if (!titelJetzt) app.globusInfo.classList.remove('mit-titel'); }, dauer);
       textWechseln(zahlEl, text, dauer);
     } else if (zahlEl.textContent !== text) textWechseln(zahlEl, text, 400);
     app.zurueckKnopf.hidden = !s.gezoomt;
@@ -1088,6 +1093,8 @@ function globusAnsichtBauen(alben, punkte) {
     liste: p => blattZeigen(p),
     sicht: infoSetzen,
     blattOffen: () => !!app.blatt,
+    abwaehlen: () => blattSchliessen(),
+    verdeckt: () => !!app.album || !!app.textseite,
     leer: () => { if (app.blatt) blattSchliessen(); else app.globus.heraus(); },
     hover: p => {
       app.globus.hervorheben(p ? p.alben : null);
@@ -1133,47 +1140,68 @@ function blattSchliessen() {
 /* Überschrift wechseln: das alte Wort blendet Buchstabe für Buchstabe von links nach rechts aus,
    das neue folgt direkt dahinter im selben Tempo. Gibt die Gesamtdauer in ms zurück. */
 const TITEL_SCHRITT = 35, TITEL_ABSTAND = 140, TITEL_DAUER = 380, TITEL_EASE = 'cubic-bezier(.45, 0, .55, 1)';
+/* x-Position jedes Buchstabens im fertig gesetzten Wort (mit Unterschneidung), relativ zum Element */
+function buchstabenPositionen(el, textEl) {
+  const node = textEl && textEl.firstChild;
+  if (!node) return [];
+  const links = el.getBoundingClientRect().left;
+  const pos = [];
+  let i = 0;
+  for (const c of node.textContent) {
+    const r = document.createRange();
+    r.setStart(node, i);
+    r.setEnd(node, i + c.length);
+    pos.push({ c, x: r.getBoundingClientRect().left - links });
+    i += c.length;
+  }
+  return pos;
+}
+
 function titelWechseln(el, alt, neu) {
   const animiert = !ruhig() && typeof el.animate === 'function';
+  // Lage des alten Worts: aus der laufenden Animation oder aus dem gesetzten Text
+  let altPos = [], altGroesse = '';
+  if (animiert && alt) {
+    if (el._lauf) ({ pos: altPos, groesse: altGroesse } = el._lauf);
+    else { altPos = buchstabenPositionen(el, el.querySelector('.titel-text')); altGroesse = getComputedStyle(el).fontSize; }
+  }
   if (el.getAnimations) for (const a of el.getAnimations({ subtree: true })) a.cancel();
-  const altGroesse = el.hidden ? '' : getComputedStyle(el).fontSize;
+  el._lauf = null;
   el.setAttribute('aria-label', neu);
-  // Größe für das neue Wort bestimmen (passt in eine Zeile)
-  el.hidden = false;
-  el.textContent = neu;
+  // der echte Text bestimmt Größe und Laufweite; während der Animation unsichtbar
+  const echt = h('span', { class: 'titel-text', text: neu });
+  el.replaceChildren(echt);
   if (neu) titelEinpassen(el);
-  if (!animiert || (!alt && !neu)) { el.hidden = !neu; return 0; }
-  el.replaceChildren();
-  const buchstaben = (ziel, wort) => [...wort].map(c => {
-    const b = h('span', { class: 'bst', text: c, 'aria-hidden': 'true' });
-    ziel.append(b);
+  if (!animiert || (!alt && !neu)) return 0;
+  const neuPos = buchstabenPositionen(el, echt);
+  const ebene = h('span', { class: 'titel-ebene', 'aria-hidden': 'true' });
+  el.append(ebene);
+  echt.style.visibility = 'hidden';
+  const setzen = (pos, groesse) => pos.map(({ c, x }) => {
+    const b = h('span', { text: c, style: { left: `${x}px`, fontSize: groesse || '' } });
+    ebene.append(b);
     return b;
   });
   let ende = 0;
-  if (alt) {
-    const altEl = h('span', { class: 'titel-alt', 'aria-hidden': 'true', style: { fontSize: altGroesse } });
-    el.append(altEl);
-    const bs = buchstaben(altEl, alt);
-    bs.forEach((b, k) => b.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateX(-6px)' }],
+  if (altPos.length) {
+    setzen(altPos, altGroesse).forEach((b, k) => b.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateX(-6px)' }],
       { duration: TITEL_DAUER, delay: k * TITEL_SCHRITT, easing: TITEL_EASE, fill: 'forwards' }));
-    ende = bs.length * TITEL_SCHRITT + TITEL_DAUER;
+    ende = altPos.length * TITEL_SCHRITT + TITEL_DAUER;
   }
-  if (neu) {
-    const start = alt ? TITEL_ABSTAND : 0;
-    const bs = buchstaben(el, neu);
-    bs.forEach((b, k) => b.animate([{ opacity: 0, transform: 'translateX(6px)' }, { opacity: 1, transform: 'none' }],
+  if (neuPos.length) {
+    const start = altPos.length ? TITEL_ABSTAND : 0;
+    setzen(neuPos, '').forEach((b, k) => b.animate([{ opacity: 0, transform: 'translateX(6px)' }, { opacity: 1, transform: 'none' }],
       { duration: TITEL_DAUER, delay: start + k * TITEL_SCHRITT, easing: TITEL_EASE, fill: 'backwards' }));
-    ende = Math.max(ende, start + bs.length * TITEL_SCHRITT + TITEL_DAUER);
-  } else {
-    // ohne neues Wort braucht das alte trotzdem eine Zeile Höhe
-    el.append(h('span', { class: 'bst', text: ' ', 'aria-hidden': 'true' }));
+    ende = Math.max(ende, start + neuPos.length * TITEL_SCHRITT + TITEL_DAUER);
   }
-  // danach wieder als schlichter Text (saubere Laufweite) bzw. ausblenden
-  const stand = neu;
+  const lauf = { pos: neuPos, groesse: getComputedStyle(el).fontSize };
+  el._lauf = lauf;
+  // danach wieder der echte Text – Buchstaben stehen exakt an denselben Stellen
   setTimeout(() => {
-    if (el.getAttribute('aria-label') !== stand) return;
-    el.textContent = stand;
-    el.hidden = !stand;
+    if (el._lauf !== lauf) return;
+    el._lauf = null;
+    ebene.remove();
+    echt.style.visibility = '';
   }, ende + 20);
   return ende;
 }
@@ -1664,7 +1692,7 @@ function albumOeffnen(nr, fotoNr) {
   if (!a) { location.replace('#/'); return; }
   if (app.album && app.album.a === a) { if (fotoNr) app.album.geheZuPosition(fotoNr); return; }
   vorschauVerbergen();
-  blattSchliessen();
+  // die Liste des Orts bleibt offen: nach dem Album geht es dort weiter
   const index = fotoNr ? fotoNr - 1 : 0;
   const quelle = document.querySelector(`.eintrag[data-nr="${nr}"] .titel`);
   const oeffnen = () => {
@@ -1709,6 +1737,8 @@ function albumSchliessen() {
 
 function albumEntfernen() {
   if (!app.album) return;
+  // Leerlauf der Weltkarte erst ab der Rückkehr zählen
+  if (app.globus) { app.globus.aktiv = performance.now(); app.globus.pauseBis = performance.now() + 3000; }
   const alt = app.album;
   app.album = null;
   const ziel = document.querySelector(`.eintrag[data-nr="${alt.a.nr}"] .titel`);
