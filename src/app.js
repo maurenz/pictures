@@ -1899,7 +1899,16 @@ function gestenSperren() {
   }, { passive: false });
 }
 
+/* Hochformat festhalten, wo das Gerät es erlaubt (Android als App); iOS ignoriert das */
+function hochformatSperren() {
+  try {
+    const p = screen.orientation && screen.orientation.lock && screen.orientation.lock('portrait');
+    if (p && p.catch) p.catch(() => {});
+  } catch { /* nicht unterstützt */ }
+}
+
 async function start() {
+  hochformatSperren();
   gestenSperren();
   // Beim Laden immer mit dem Globus beginnen (Direktlinks auf Alben und Textseiten bleiben erhalten)
   const ziel = location.hash.replace(/^#\/?/, '').split('/')[0];
