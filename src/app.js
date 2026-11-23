@@ -181,6 +181,14 @@ function gemeinsameRegion(orte) {
 
 /* Nahe Orte schrittweise zusammenfassen. d = Winkelabstand, ab dem ein Knoten in seine Teile zerfällt */
 function ortBaum(orte) {
+  const proLand = new Map();
+  for (const o of orte) proLand.set(o.land, (proLand.get(o.land) || 0) + 1);
+  // alle Orte eines Landes in einer Gruppe: Landesname; nur ein Teil davon: kleinste gemeinsame Region
+  const gruppenName = alle => {
+    const laender = [...new Set(alle.map(o => o.landName))];
+    if (laender.length === 1) return alle.length === proLand.get(alle[0].land) ? laender[0] : (gemeinsameRegion(alle) || laender[0]);
+    return laender.length === 2 ? `${laender[0]}, ${laender[1]}` : `${laender[0]} +${laender.length - 1}`;
+  };
   let k = orte.map(o => Object.assign(o, { d: 0, kinder: null, orte: [o] }));
   let n = 0;
   while (k.length > 1) {
@@ -191,14 +199,13 @@ function ortBaum(orte) {
     }
     const a = k[bi], b = k[bj];
     const alle = [...a.orte, ...b.orte];
-    const laender = [...new Set(alle.map(o => o.landName))];
     k.splice(bj, 1);
     k[bi] = {
       key: `G:${n++}`, typ: 'gruppe', kinder: [a, b], orte: alle,
       d: Math.max(best, a.d, b.d),
       lat: mittel(alle.map(o => o.lat)), lon: mittelLon(alle.map(o => o.lon)),
       alben: alle.flatMap(o => o.alben).sort((x, y) => x.rang - y.rang),
-      name: laender.length === 1 ? (gemeinsameRegion(alle) || laender[0]) : laender.length === 2 ? `${laender[0]}, ${laender[1]}` : `${laender[0]} +${laender.length - 1}`,
+      name: gruppenName(alle),
     };
   }
   return k[0] || null;
@@ -924,8 +931,10 @@ class Globus {
     const t0 = performance.now();
     if (ruhig()) dauer = 1;
     this.anim = true;
+    const nr = this.animNr = (this.animNr || 0) + 1; // eine neue Animation löst die laufende ab
     return new Promise(fertig => {
       const schritt = jetzt => {
+        if (nr !== this.animNr) { fertig(); return; }
         const t = Math.min(1, (jetzt - t0) / dauer);
         const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
         this.rot = [vonRot[0] + dl * e, vonRot[1] + (zielRot[1] - vonRot[1]) * e];
@@ -938,6 +947,20 @@ class Globus {
       };
       requestAnimationFrame(schritt);
     });
+  }
+
+  /* Ort mittig zwischen oben und unten (Pixel im Globus) zeigen, Zoom bleibt */
+  zeigen(p, oben, unten) {
+    const hh = this.el.clientHeight || 1;
+    const ty = (oben + unten) / 2 - hh / 2;
+    this.aktiv = performance.now();
+    this.animieren([-p.lon, -p.lat], this.skala, ty, 900);
+  }
+
+  /* nach dem Schließen der Liste: Kugel wieder mittig */
+  mitteZurueck() {
+    if (Math.abs(this.ty) < 0.5) return;
+    this.animieren(this.rot, this.skala, 0, 700);
   }
 
   drehenZu(p) {
@@ -1107,7 +1130,7 @@ function globusAnsichtBauen(alben, punkte) {
 }
 
 function blattZeigen(p) {
-  blattSchliessen();
+  blattSchliessen(true);
   const liste = h('div', { class: 'blatt-liste' });
   let jahr = null;
   for (const a of p.alben) {
@@ -1121,18 +1144,34 @@ function blattZeigen(p) {
       h('span', { class: 'monat', text: a.mon, 'aria-hidden': 'true' })));
   }
   app.blatt = h('section', { class: 'blatt', 'aria-label': `Alben in ${p.name}` },
-    h('button', { class: 'blatt-zu', 'aria-label': 'Schließen', icon: 'zu', onclick: blattSchliessen }),
+    h('button', { class: 'blatt-zu', 'aria-label': 'Schließen', icon: 'zu', onclick: () => blattSchliessen() }),
     h('div', { class: 'blatt-kopf' }, h('h3', { text: p.name }), h('span', { class: 'zahl', text: anzahl(p.alben.length, 'Album', 'Alben') })),
-    liste);
+    // höchstens fünf Alben sichtbar, der Rest per Scrollen
+    h('div', { class: 'blatt-scroll' }, liste));
   app.globusAnsicht.append(app.blatt);
   app.globus.hervorheben(p.alben);
+  // den gewählten Punkt mittig in den freien Kartenbereich über der Liste rücken
+  const blatt = app.blatt;
+  requestAnimationFrame(() => {
+    if (app.blatt !== blatt) return;
+    const g = app.globus.el.getBoundingClientRect();
+    const info = app.globusInfo.getBoundingClientRect();
+    const b = blatt.getBoundingClientRect();
+    const oben = Math.max(0, info.bottom - 34 - g.top);
+    // Liste unten über die ganze Breite (Handy): Bereich bis zur Oberkante der Liste; sonst bis zum unteren Rand
+    const ganzeBreite = b.width > g.width * 0.8;
+    const unten = ganzeBreite ? (innerHeight - blatt.offsetHeight) - g.top : g.height;
+    app.globus.zeigen(p, oben, unten);
+  });
 }
-function blattSchliessen() {
+function blattSchliessen(gleichNeu = false) {
   if (app.blatt) {
     const alt = app.blatt;
     app.blatt = null;
     alt.classList.add('raus');
     setTimeout(() => alt.remove(), ruhig() ? 0 : 340);
+    // Karte wieder in ihre normale Lage
+    if (!gleichNeu && app.globus) app.globus.mitteZurueck();
   }
   if (app.globus) app.globus.hervorheben(null);
 }
@@ -1396,6 +1435,7 @@ class AlbumAnsicht {
     this.drehung += 225;
     this.kontrast.style.transform = `rotate(${this.drehung}deg)`;
     this.el.classList.toggle('dunkel', this.dunkel);
+    statusFarbe(this.dunkel);
     speicher.schreib('dunkel', this.dunkel ? '1' : '0');
   }
 
@@ -1698,6 +1738,7 @@ function albumOeffnen(nr, fotoNr) {
   const oeffnen = () => {
     if (app.album) app.album.entfernen();
     app.album = new AlbumAnsicht(a, index);
+    statusFarbe(app.album.dunkel);
     document.body.append(app.album.el);
     document.documentElement.style.overflow = 'hidden';
     app.album.layout();
@@ -1719,6 +1760,7 @@ async function vorschauOeffnen(nr) {
     if (!a) throw new Error('Das Album hat noch keine Fotos.');
     if (app.album) app.album.entfernen();
     app.album = new AlbumAnsicht(a, 0, true);
+    statusFarbe(app.album.dunkel);
     document.body.append(app.album.el);
     document.documentElement.style.overflow = 'hidden';
     app.album.layout();
@@ -1735,10 +1777,20 @@ function albumSchliessen() {
   location.hash = app.letzteUebersicht || '#/';
 }
 
+/* Farbe der Statusleiste (Uhrzeit, Empfang) und des Seitenhintergrunds passend zum Album */
+const HELL = '#ffffff', DUNKEL = '#0d0d0d';
+function statusFarbe(dunkel) {
+  const farbe = dunkel ? DUNKEL : HELL;
+  for (const m of document.querySelectorAll('meta[name="theme-color"]')) m.setAttribute('content', farbe);
+  document.documentElement.style.backgroundColor = dunkel ? farbe : '';
+  document.body.style.backgroundColor = dunkel ? farbe : '';
+}
+
 function albumEntfernen() {
   if (!app.album) return;
   // Leerlauf der Weltkarte erst ab der Rückkehr zählen
   if (app.globus) { app.globus.aktiv = performance.now(); app.globus.pauseBis = performance.now() + 3000; }
+  statusFarbe(false);
   const alt = app.album;
   app.album = null;
   const ziel = document.querySelector(`.eintrag[data-nr="${alt.a.nr}"] .titel`);

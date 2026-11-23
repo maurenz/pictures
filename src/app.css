@@ -209,6 +209,8 @@ html.fest .ansichten, html.fest .ansicht[data-ansicht="globus"] { height: 100%; 
 .blatt-kopf { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 4px; padding-right: 44px; }
 .blatt-kopf h3 { margin: 0; font-size: 22px; font-weight: 700; }
 .blatt-kopf span { font-size: 13px; color: var(--grau); }
+.blatt-scroll { max-height: calc(5 * 52px); overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; scrollbar-width: none; margin: 0 calc(-1 * var(--rand)); padding: 0 var(--rand); }
+.blatt-scroll::-webkit-scrollbar { display: none; }
 .blatt-liste { position: relative; }
 .blatt-liste::before { content: ''; position: absolute; left: 45.5px; top: 14px; bottom: 14px; width: 1px; background: var(--schwarz); }
 .blatt-liste .eintrag { opacity: 1; height: 52px; }
