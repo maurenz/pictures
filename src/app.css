@@ -61,7 +61,6 @@ img { display: block; }
 .marke { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .koord { font-size: 16px; font-weight: 300; letter-spacing: .02em; white-space: nowrap; }
 .unterzeile { font-size: 11px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; }
-.kopf-nav { display: none; }
 
 /* ---------- Umschalter ---------- */
 .umschalter {
@@ -193,8 +192,9 @@ html.fest .ansichten, html.fest .ansicht[data-ansicht="globus"] { height: 100%; 
 /* Kennzahlen oben (stehen immer), darunter der Titel mit fester Höhe – nichts springt */
 .globus-info p { margin: 0; font-size: 13px; color: var(--grau); }
 .globus-info h2 { position: relative; height: 56px; margin: 0; font-size: 44px; font-weight: 200; letter-spacing: -.035em; line-height: 1.15; white-space: nowrap; }
+.globus-info h2 .titel-text span { display: inline-block; white-space: pre; }
 .globus-info h2 .titel-ebene { position: absolute; inset: 0; }
-.globus-info h2 .titel-ebene span { position: absolute; top: 0; white-space: pre; }
+.globus-info h2 .titel-ebene span { position: absolute; white-space: pre; }
 
 /* Zurück eine Zoomstufe: unten links wie in der Albumansicht */
 .globus-zurueck { position: absolute; z-index: 4; left: 10px; bottom: calc(24px + env(safe-area-inset-bottom)); animation: blende .3s ease both; }
@@ -334,8 +334,6 @@ html.fest .ansichten, html.fest .ansicht[data-ansicht="globus"] { height: 100%; 
   :root { --rand: 48px; --kopf: 96px; }
   .kopf { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); padding: 26px var(--rand) 18px; }
   .koord { font-size: 24px; }
-  .kopf-nav { display: flex; justify-self: end; gap: 28px; font-size: 15px; }
-  .kopf-nav a:hover { font-weight: 700; }
 
   .ansichten.kombi { display: flex; align-items: stretch; gap: 24px 64px; padding: 4px 0 0 var(--rand); }
   .ansichten.kombi .ansicht[data-ansicht="zeit"], .ansichten.kombi .ansicht[data-ansicht="globus"] { display: block; animation: none; }

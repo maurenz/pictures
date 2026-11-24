@@ -568,17 +568,26 @@ class Globus {
   }
 
   /* Radius der Weltkugel: links und rechts je 1 % Abstand */
+  /* Am Desktop liegt oben die Infozeile mit Verlauf: Kugel etwas kleiner und tiefer */
+  obenRand() { return DESKTOP.matches ? 110 : 0; }
+
   basisR() {
     const w = this.el.clientWidth;
     const hh = this.el.clientHeight || w;
-    return Math.min(w * 0.98, hh) / 2 - 6;
+    return Math.min(w * 0.98, hh - this.obenRand()) / 2 - 6;
+  }
+
+  /* senkrechte Lage der Kugelmitte im Element */
+  mitteY() {
+    const hh = this.el.clientHeight || this.el.clientWidth;
+    return hh / 2 + this.obenRand() / 2 + this.ty;
   }
 
   projSetzen() {
     const w = this.el.clientWidth;
     const hh = this.el.clientHeight || w;
     this.r = this.basisR();
-    this.proj.rotate(this.rot).scale(this.r * this.skala).translate([w / 2, hh / 2 + this.ty]);
+    this.proj.rotate(this.rot).scale(this.r * this.skala).translate([w / 2, this.mitteY()]);
     return [w, hh];
   }
 
@@ -589,7 +598,7 @@ class Globus {
     const nah = this.skala > 1.05;
     if (nah !== this.istNah) { this.istNah = nah; this.el.classList.toggle('nah', nah); this.namenSetzen(); }
     // grauer Rand der Kugel, solange er irgendwo im Bild liegt
-    const randSichtbar = this.r * this.skala < Math.hypot(w / 2, hh / 2 + Math.abs(this.ty)) + 4;
+    const randSichtbar = this.r * this.skala < Math.hypot(w / 2, hh / 2 + Math.abs(this.mitteY() - hh / 2)) + 4;
     this.kugel.setAttribute('d', randSichtbar ? this.pfad({ type: 'Sphere' }) || '' : '');
     // Länder und Küsten immer in derselben, zum Zoom passenden Detailtiefe
     const fein = this.skala > 1.6 && !!this.land50;
@@ -627,7 +636,7 @@ class Globus {
         const d = geoDistance(t.c, mitteGeo);
         if (d + t.rad > Math.PI / 2 - 0.02 && d - t.rad < Math.PI / 2 + 0.02) amRand.push(t.coords);
       }
-      const cx = w / 2, cy = hh / 2 + this.ty, ring = rr => `M${(cx - rr).toFixed(2)},${cy.toFixed(2)}a${rr.toFixed(2)},${rr.toFixed(2)} 0 1,0 ${(2 * rr).toFixed(2)},0a${rr.toFixed(2)},${rr.toFixed(2)} 0 1,0 ${(-2 * rr).toFixed(2)},0Z`;
+      const cx = w / 2, cy = this.mitteY(), ring = rr => `M${(cx - rr).toFixed(2)},${cy.toFixed(2)}a${rr.toFixed(2)},${rr.toFixed(2)} 0 1,0 ${(2 * rr).toFixed(2)},0a${rr.toFixed(2)},${rr.toFixed(2)} 0 1,0 ${(-2 * rr).toFixed(2)},0Z`;
       this.horizontRing.setAttribute('d', ring(R + 0.4) + ring(Math.max(0, R - 0.4)));
       this.projH.rotate(this.rot).scale(R + 0.4).translate([cx, cy]); // Rand der Fläche reicht bis zur Außenkante des Rings
     }
@@ -731,22 +740,39 @@ class Globus {
     // je Ort: wann er sichtbar wurde und wann er zuletzt beschriftet war
     const status = new Map();
     let zuletzt = null;
+    const aktiv = () => !this.gezoomt && !this.manuell && !ruhig() && this.el.offsetParent && !document.hidden;
+    // Punkte innerhalb von 85 % des Radius
+    const kandidaten = () => {
+      const jetzt = performance.now();
+      const cx = this.el.clientWidth / 2, cy = this.mitteY();
+      const grenze = (this.r || cx) * this.skala * 0.85;
+      const sichtbar = [];
+      for (const k of this.knoepfe.values()) {
+        const key = k.dataset.key;
+        const m = /translate\(([-\d.]+)px, ([-\d.]+)px\)/.exec(k.style.transform);
+        const drin = !k.classList.contains('hinten') && m && Math.hypot(+m[1] - cx, +m[2] - cy) < grenze;
+        let st = status.get(key);
+        if (!st) { st = { seit: null, gezeigt: -Infinity }; status.set(key, st); }
+        if (!drin) { st.seit = null; continue; }
+        if (st.seit === null) st.seit = jetzt;
+        sichtbar.push({ k, st, x: +m[1] });
+      }
+      return sichtbar;
+    };
+    // Name ausblenden – außer es gibt keinen anderen sichtbaren Ort, der ihn ablösen könnte
+    const ausblenden = k => {
+      if (!k.classList.contains('zeigt')) return;
+      if (aktiv()) {
+        const andere = kandidaten().filter(x => x.k !== k);
+        const selbstDa = kandidaten().some(x => x.k === k);
+        if (!andere.length && selbstDa) return; // bleibt stehen, bis ein anderer dran ist
+      }
+      k.classList.remove('zeigt');
+    };
     const takt = () => {
-      if (!this.gezoomt && !this.manuell && !ruhig() && this.el.offsetParent && !document.hidden) {
+      if (aktiv()) {
         const jetzt = performance.now();
-        const cx = this.el.clientWidth / 2, cy = this.el.clientHeight / 2 + this.ty;
-        const grenze = (this.r || cx) * this.skala * 0.85;
-        const sichtbar = [];
-        for (const k of this.knoepfe.values()) {
-          const key = k.dataset.key;
-          const m = /translate\(([-\d.]+)px, ([-\d.]+)px\)/.exec(k.style.transform);
-          const drin = !k.classList.contains('hinten') && m && Math.hypot(+m[1] - cx, +m[2] - cy) < grenze;
-          let st = status.get(key);
-          if (!st) { st = { seit: null, gezeigt: -Infinity }; status.set(key, st); }
-          if (!drin) { st.seit = null; continue; }
-          if (st.seit === null) st.seit = jetzt;
-          sichtbar.push({ k, st, x: +m[1] });
-        }
+        const sichtbar = kandidaten();
         if (sichtbar.length) {
           // zuerst Orte, die seit dem Erscheinen noch keinen Namen hatten, sonst den am längsten nicht gezeigten;
           // bei Gleichstand den, der beim Drehen als Nächstes aus dem Bild wandert (am weitesten rechts)
@@ -754,11 +780,15 @@ class Globus {
           sichtbar.sort((a, b) => (neu(b) - neu(a)) || (neu(a) ? 0 : a.st.gezeigt - b.st.gezeigt) || (b.x - a.x));
           let wahl = sichtbar[0];
           if (wahl.k === zuletzt && sichtbar.length > 1) wahl = sichtbar[1];
+          // ein noch stehender Name eines anderen Orts weicht jetzt
+          for (const k of this.knoepfe.values()) if (k !== wahl.k) k.classList.remove('zeigt');
           wahl.st.gezeigt = jetzt;
           zuletzt = wahl.k;
           const k = wahl.k;
           k.classList.add('zeigt');
-          setTimeout(() => k.classList.remove('zeigt'), 2200);
+          setTimeout(() => ausblenden(k), 2200);
+        } else {
+          for (const k of this.knoepfe.values()) k.classList.remove('zeigt');
         }
       }
       setTimeout(takt, 2800);
@@ -810,6 +840,7 @@ class Globus {
   ziehenEinrichten() {
     const zeiger = new Map();
     let start = null, pinch = null, warPinch = false;
+    const fangen = () => { for (const id of zeiger.keys()) { try { this.el.setPointerCapture(id); } catch { /* egal */ } } };
     const pinchStart = () => {
       const [a, b] = [...zeiger.values()];
       const m = this.lokal((a.x + b.x) / 2, (a.y + b.y) / 2);
@@ -826,8 +857,9 @@ class Globus {
       if (e.button > 0) return;
       this.aktiv = performance.now();
       zeiger.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      try { this.el.setPointerCapture(e.pointerId); } catch { /* egal */ }
-      if (zeiger.size === 2 && !this.anim) { pinchStart(); return; }
+      // Zeiger erst festhalten, wenn wirklich gezogen oder gezoomt wird – sonst landet der Klick
+      // mit der Maus nicht mehr auf dem Punkt, sondern auf der Kugel
+      if (zeiger.size === 2 && !this.anim) { fangen(); pinchStart(); return; }
       if (zeiger.size === 1) {
         warPinch = false;
         start = { x: e.clientX, y: e.clientY, rot: [...this.rot], id: e.pointerId, ziel: e.target };
@@ -851,6 +883,7 @@ class Globus {
       if (this.anim) return;
       if (!this.gezogen) {
         this.gezogen = true;
+        fangen();
         this.zieht = true;
         this.el.classList.add('zieht');
         if (!this.gezoomt) this.manuellSetzen(true);
@@ -951,8 +984,7 @@ class Globus {
 
   /* Ort mittig zwischen oben und unten (Pixel im Globus) zeigen, Zoom bleibt */
   zeigen(p, oben, unten) {
-    const hh = this.el.clientHeight || 1;
-    const ty = (oben + unten) / 2 - hh / 2;
+    const ty = (oben + unten) / 2 - (this.mitteY() - this.ty);
     this.aktiv = performance.now();
     this.animieren([-p.lon, -p.lat], this.skala, ty, 900);
   }
@@ -1109,18 +1141,37 @@ function globusAnsichtBauen(alben, punkte) {
       textWechseln(zahlEl, text, dauer);
     } else if (zahlEl.textContent !== text) textWechseln(zahlEl, text, 400);
     app.zurueckKnopf.hidden = !s.gezoomt;
-    zeitstrahlFiltern(DESKTOP.matches && s.gezoomt ? s.alben.map(a => a.nr) : null);
+    letzteSicht = s;
+    filterSetzen();
+  };
+  // Desktop: Zeitstrahl links zeigt die Alben des gewählten Sammelpunkts, sonst die im Kartenausschnitt sichtbaren
+  let letzteSicht = { gezoomt: false };
+  const filterSetzen = () => {
+    if (!DESKTOP.matches) { zeitstrahlFiltern(null); return; }
+    if (app.auswahl) zeitstrahlFiltern(app.auswahl.alben.map(a => a.nr));
+    else zeitstrahlFiltern(letzteSicht.gezoomt ? letzteSicht.alben.map(a => a.nr) : null);
+  };
+  const auswaehlen = p => {
+    app.auswahl = p;
+    app.globus.hervorheben(p ? p.alben : null);
+    filterSetzen();
   };
   app.globus = new Globus(punkte, mitOrt[0]?.ort, {
     album: a => { location.hash = `#/album/${a.nr}`; },
-    liste: p => blattZeigen(p),
+    // Handy: Liste unten; Desktop: Auswahl filtert den Zeitstrahl links
+    liste: p => { if (DESKTOP.matches) auswaehlen(p); else blattZeigen(p); },
     sicht: infoSetzen,
-    blattOffen: () => !!app.blatt,
-    abwaehlen: () => blattSchliessen(),
+    blattOffen: () => !!app.blatt || !!app.auswahl,
+    abwaehlen: () => { blattSchliessen(); if (app.auswahl) auswaehlen(null); },
     verdeckt: () => !!app.album || !!app.textseite,
-    leer: () => { if (app.blatt) blattSchliessen(); else app.globus.heraus(); },
+    leer: () => {
+      if (app.auswahl) auswaehlen(null);
+      else if (app.blatt) blattSchliessen();
+      else app.globus.heraus();
+    },
     hover: p => {
-      app.globus.hervorheben(p ? p.alben : null);
+      const ziel = p || app.auswahl;
+      app.globus.hervorheben(ziel ? ziel.alben : null);
       zeitstrahlHervorheben(p ? p.alben.map(a => a.nr) : [], true);
     },
   });
@@ -1179,69 +1230,43 @@ function blattSchliessen(gleichNeu = false) {
 /* Überschrift wechseln: das alte Wort blendet Buchstabe für Buchstabe von links nach rechts aus,
    das neue folgt direkt dahinter im selben Tempo. Gibt die Gesamtdauer in ms zurück. */
 const TITEL_SCHRITT = 35, TITEL_ABSTAND = 140, TITEL_DAUER = 380, TITEL_EASE = 'cubic-bezier(.45, 0, .55, 1)';
-/* x-Position jedes Buchstabens im fertig gesetzten Wort (mit Unterschneidung), relativ zum Element */
-function buchstabenPositionen(el, textEl) {
-  const node = textEl && textEl.firstChild;
-  if (!node) return [];
-  const links = el.getBoundingClientRect().left;
-  const pos = [];
-  let i = 0;
-  for (const c of node.textContent) {
-    const r = document.createRange();
-    r.setStart(node, i);
-    r.setEnd(node, i + c.length);
-    pos.push({ c, x: r.getBoundingClientRect().left - links });
-    i += c.length;
-  }
-  return pos;
-}
-
+/* Überschrift wechseln: das alte Wort blendet Buchstabe für Buchstabe von links nach rechts aus,
+   das neue folgt direkt dahinter im selben Tempo. Der Titel besteht dauerhaft aus einzelnen Buchstaben,
+   damit Laufweite und Abstände während und nach der Animation exakt gleich sind. Gibt die Dauer in ms zurück. */
 function titelWechseln(el, alt, neu) {
   const animiert = !ruhig() && typeof el.animate === 'function';
-  // Lage des alten Worts: aus der laufenden Animation oder aus dem gesetzten Text
-  let altPos = [], altGroesse = '';
-  if (animiert && alt) {
-    if (el._lauf) ({ pos: altPos, groesse: altGroesse } = el._lauf);
-    else { altPos = buchstabenPositionen(el, el.querySelector('.titel-text')); altGroesse = getComputedStyle(el).fontSize; }
-  }
+  // altes Wort: Buchstaben samt ihrer Lage übernehmen
+  const altText = el.querySelector('.titel-text');
+  const altBs = altText ? [...altText.children] : [];
+  const altLage = altBs.map(b => ({ c: b.textContent, x: b.offsetLeft, y: b.offsetTop }));
+  const altGroesse = getComputedStyle(el).fontSize;
   if (el.getAnimations) for (const a of el.getAnimations({ subtree: true })) a.cancel();
-  el._lauf = null;
   el.setAttribute('aria-label', neu);
-  // der echte Text bestimmt Größe und Laufweite; während der Animation unsichtbar
-  const echt = h('span', { class: 'titel-text', text: neu });
-  el.replaceChildren(echt);
+  const text = h('span', { class: 'titel-text', 'aria-hidden': 'true' });
+  const neuBs = [...neu].map(c => { const b = h('span', { text: c }); text.append(b); return b; });
+  el.replaceChildren(text);
   if (neu) titelEinpassen(el);
   if (!animiert || (!alt && !neu)) return 0;
-  const neuPos = buchstabenPositionen(el, echt);
-  const ebene = h('span', { class: 'titel-ebene', 'aria-hidden': 'true' });
-  el.append(ebene);
-  echt.style.visibility = 'hidden';
-  const setzen = (pos, groesse) => pos.map(({ c, x }) => {
-    const b = h('span', { text: c, style: { left: `${x}px`, fontSize: groesse || '' } });
-    ebene.append(b);
-    return b;
-  });
   let ende = 0;
-  if (altPos.length) {
-    setzen(altPos, altGroesse).forEach((b, k) => b.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateX(-6px)' }],
-      { duration: TITEL_DAUER, delay: k * TITEL_SCHRITT, easing: TITEL_EASE, fill: 'forwards' }));
-    ende = altPos.length * TITEL_SCHRITT + TITEL_DAUER;
+  if (alt && altLage.length) {
+    // altes Wort als Ebene genau an seiner bisherigen Stelle
+    const ebene = h('span', { class: 'titel-ebene', 'aria-hidden': 'true' });
+    el.append(ebene);
+    altLage.forEach(({ c, x, y }, k) => {
+      const b = h('span', { text: c, style: { left: `${x}px`, top: `${y}px`, fontSize: altGroesse } });
+      ebene.append(b);
+      b.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateX(-6px)' }],
+        { duration: TITEL_DAUER, delay: k * TITEL_SCHRITT, easing: TITEL_EASE, fill: 'forwards' });
+    });
+    ende = altLage.length * TITEL_SCHRITT + TITEL_DAUER;
+    setTimeout(() => ebene.remove(), ende + 20);
   }
-  if (neuPos.length) {
-    const start = altPos.length ? TITEL_ABSTAND : 0;
-    setzen(neuPos, '').forEach((b, k) => b.animate([{ opacity: 0, transform: 'translateX(6px)' }, { opacity: 1, transform: 'none' }],
+  if (neuBs.length) {
+    const start = alt ? TITEL_ABSTAND : 0;
+    neuBs.forEach((b, k) => b.animate([{ opacity: 0, transform: 'translateX(6px)' }, { opacity: 1, transform: 'none' }],
       { duration: TITEL_DAUER, delay: start + k * TITEL_SCHRITT, easing: TITEL_EASE, fill: 'backwards' }));
-    ende = Math.max(ende, start + neuPos.length * TITEL_SCHRITT + TITEL_DAUER);
+    ende = Math.max(ende, start + neuBs.length * TITEL_SCHRITT + TITEL_DAUER);
   }
-  const lauf = { pos: neuPos, groesse: getComputedStyle(el).fontSize };
-  el._lauf = lauf;
-  // danach wieder der echte Text – Buchstaben stehen exakt an denselben Stellen
-  setTimeout(() => {
-    if (el._lauf !== lauf) return;
-    el._lauf = null;
-    ebene.remove();
-    echt.style.visibility = '';
-  }, ende + 20);
   return ende;
 }
 
@@ -1426,6 +1451,7 @@ class AlbumAnsicht {
       this.infoEl);
     this.el.querySelector('.album-zurueck-oben span').innerHTML = ICON.links;
     this.wischenEinrichten();
+    this.radZoomEinrichten();
   }
 
   titelFuerUebergang() { return DESKTOP.matches ? this.titelDesk : this.titelMobil; }
@@ -1599,6 +1625,58 @@ class AlbumAnsicht {
     z.img.style.transform = `translate(${z.tx}px, ${z.ty}px) scale(${z.s})`;
   }
 
+  /* Desktop: Zoom mit Trackpad (zwei Finger) oder Strg + Mausrad. Springt zurück, sobald das Trackpad
+     losgelassen bzw. Strg losgelassen wird – wie der Zwei-Finger-Zoom am Handy. */
+  radZoomEinrichten() {
+    const b = this.buehne;
+    let strgGedrueckt = false, ruhe = null;
+    const start = (x, y) => {
+      const img = this.aktuell && this.aktuell.img;
+      if (!img || this.wechsel) return false;
+      if (!this.zoom) {
+        const r = img.getBoundingClientRect();
+        img.style.transition = 'none';
+        img.style.transformOrigin = `${x - r.left}px ${y - r.top}px`;
+        this.zoom = { img, s: 1, tx: 0, ty: 0, rad: true };
+        this.el.classList.add('zoomt');
+      }
+      return true;
+    };
+    const setzen = s => {
+      const z = this.zoom;
+      z.s = Math.max(1, Math.min(5, s));
+      z.img.style.transform = `scale(${z.s})`;
+    };
+    // Ende: ohne gedrückte Strg-Taste (Trackpad) kurz nach dem letzten Ereignis, sonst beim Loslassen von Strg
+    const endePlanen = () => {
+      clearTimeout(ruhe);
+      if (!strgGedrueckt) ruhe = setTimeout(() => { if (this.zoom && this.zoom.rad) this.zoomEnde(); }, 220);
+    };
+    b.addEventListener('wheel', e => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      if (!start(e.clientX, e.clientY)) return;
+      const dy = Math.max(-25, Math.min(25, e.deltaY * (e.deltaMode === 1 ? 16 : 1)));
+      setzen(this.zoom.s * Math.exp(-dy * 0.01));
+      endePlanen();
+    }, { passive: false });
+    // Safari am Mac meldet das Trackpad als Geste statt als Rad
+    let gesteBasis = 1;
+    b.addEventListener('gesturestart', e => { e.preventDefault(); if (start(e.clientX, e.clientY)) gesteBasis = this.zoom.s; }, { passive: false });
+    b.addEventListener('gesturechange', e => { e.preventDefault(); if (this.zoom && this.zoom.rad) setzen(gesteBasis * e.scale); }, { passive: false });
+    b.addEventListener('gestureend', e => { e.preventDefault(); if (this.zoom && this.zoom.rad) this.zoomEnde(); }, { passive: false });
+    this.strgRunter = e => { if (e.key === 'Control') strgGedrueckt = true; };
+    this.strgHoch = e => {
+      if (e.key !== 'Control') return;
+      strgGedrueckt = false;
+      if (this.zoom && this.zoom.rad) this.zoomEnde();
+    };
+    addEventListener('keydown', this.strgRunter);
+    addEventListener('keyup', this.strgHoch);
+    this.strgWeg = () => this.strgHoch({ key: 'Control' });
+    addEventListener('blur', this.strgWeg);
+  }
+
   zoomEnde() {
     const z = this.zoom;
     this.zoom = null;
@@ -1723,6 +1801,7 @@ class AlbumAnsicht {
     document.removeEventListener('keydown', this.autoNeu);
     document.removeEventListener('keydown', this.tasten);
     removeEventListener('resize', this.groesse);
+    if (this.strgRunter) { removeEventListener('keydown', this.strgRunter); removeEventListener('keyup', this.strgHoch); removeEventListener('blur', this.strgWeg); }
     this.el.remove();
   }
 }
