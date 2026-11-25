@@ -114,6 +114,19 @@ Die Vorlagen sind keine Rechtsberatung.
 
 ---
 
+## Freigabelinks
+
+Jedes Album hat einen Status: **Entwurf** (nirgends sichtbar), **Mit Link** (nur für Freigaben) oder **Online** (für alle).
+
+Unter **Freigaben** legst du beliebig viele geheime Links an, zum Beispiel „Familie“ oder „Freunde“. Jeder Link zeigt die ganze Website mit allen öffentlichen Alben und zusätzlich den Alben, die du dort ankreuzt (nur Alben mit Status „Mit Link“). Wer den Link einmal geöffnet hat, sieht die freigegebenen Alben auch beim nächsten Besuch.
+
+- **Kopieren:** Link in die Zwischenablage, dann per Nachricht verschicken.
+- **aktiv:** Haken entfernen schaltet den Link vorübergehend ab.
+- **Neuen Link erzeugen:** Der bisherige Link funktioniert danach nicht mehr (zum Beispiel, wenn er weitergegeben wurde).
+- **Freigabe löschen:** Link und Auswahl werden entfernt.
+
+Die Bilddateien selbst sind nicht verschlüsselt: Wer eine genaue Bildadresse kennt, kann ein Bild laden. Die Freigaben verhindern, dass Alben auf der Website auftauchen.
+
 ## Sicherung
 
 - Die Verwaltung legt täglich automatisch eine Sicherung der Albumdaten in `storage/backup/` an und behält die letzten 14 Tage.

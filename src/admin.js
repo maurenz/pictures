@@ -6,7 +6,8 @@ import { exifLesen } from './exif.js';
 const MON = ['JAN', 'FEB', 'MÄR', 'APR', 'MAI', 'JUN', 'JUL', 'AUG', 'SEP', 'OKT', 'NOV', 'DEZ'];
 const MONATE = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 const TYP_NAME = { ort: 'Ort', region: 'Region', land: 'Land' };
-const ZIEL = 2560;
+const STATUS_NAME = { entwurf: 'Entwurf', link: 'Mit Link', online: 'Online' };
+const ZIEL = 4096; // längste Kante beim Hochladen (Server erzeugt daraus Zoom- und Anzeigestufen)
 
 const S = 'fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
 const ICON = {
@@ -159,7 +160,7 @@ async function verkleinern(datei) {
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(quelle, 0, 0, zw, zh);
   if (d.quelle.close) d.quelle.close();
-  const blob = await new Promise(res => c.toBlob(res, 'image/jpeg', 0.9));
+  const blob = await new Promise(res => c.toBlob(res, 'image/jpeg', 0.88));
   for (const l of [...leinwaende, c]) { l.width = 0; l.height = 0; }
   if (!blob) throw new Error('Bild konnte nicht umgewandelt werden.');
   return { blob, w: d.w, h: d.h };
@@ -260,6 +261,7 @@ function loginAnsicht() {
 function navigation(aktiv) {
   return h('nav', { class: 'unten', 'aria-label': 'Verwaltung' },
     h('a', { href: '#/', 'aria-current': aktiv === 'alben' ? 'page' : null, text: 'Alben' }),
+    h('a', { href: '#/freigaben', 'aria-current': aktiv === 'freigaben' ? 'page' : null, text: 'Freigaben' }),
     h('a', { href: '#/einstellungen', 'aria-current': aktiv === 'einstellungen' ? 'page' : null, text: 'Einstellungen' }),
     h('a', { href: '../', target: '_blank', rel: 'noopener', text: 'Website ↗' }));
 }
@@ -276,7 +278,7 @@ async function listeAnsicht() {
       h('span', { class: 'mitte' },
         h('span', { class: 'titel', text: a.titel }),
         h('span', { class: 'unter zahl', text: `${MON[a.monat - 1]} ${a.jahr} · ${a.fotos.length} ${a.fotos.length === 1 ? 'Foto' : 'Fotos'}${a.ort ? '' : ' · ohne Ort'}` })),
-      h('span', { class: `status ${a.status}`, text: a.status === 'online' ? (a.fotos.length ? 'Online' : 'Online, ohne Fotos') : 'Entwurf' })));
+      h('span', { class: `status ${a.status}`, text: statusText(a) })));
   }
   seite(
     h('header', { class: 'kopf' },
@@ -284,6 +286,16 @@ async function listeAnsicht() {
       h('div', { class: 'kopfzeile' }, h('h1', { text: 'Alben' }), h('a', { class: 'knopf', href: '#/album/neu', text: '+ Neues Album' }))),
     liste,
     navigation('alben'));
+}
+
+/* Status in der Liste; bei „Mit Link“ auch, in wie vielen Freigaben das Album steckt */
+function statusText(a) {
+  if (a.status === 'online') return a.fotos.length ? 'Online' : 'Online, ohne Fotos';
+  if (a.status === 'link') {
+    const n = (STAND.freigaben || []).filter(f => f.aktiv && f.alben.includes(a.nr)).length;
+    return n ? `Mit Link · ${n}` : 'Mit Link · noch in keiner Freigabe';
+  }
+  return 'Entwurf';
 }
 
 function albumAnsicht(nr) {
@@ -366,12 +378,13 @@ function albumAnsicht(nr) {
 
   /* Status */
   const statusFeld = h('fieldset', { class: 'segment-feld' }, h('legend', { text: 'Status' }), h('div', { class: 'segment' },
-    ...['entwurf', 'online'].map(s => h('label', { class: a.status === s ? 'an' : '' },
+    ...['entwurf', 'link', 'online'].map(s => h('label', { class: a.status === s ? 'an' : '' },
       h('input', { type: 'radio', name: 'status', value: s, checked: a.status === s, onchange: () => {
         a.status = s;
         statusFeld.querySelectorAll('label').forEach(l => l.classList.toggle('an', l.querySelector('input').checked));
         geaendert();
-      } }), s === 'online' ? 'Online' : 'Entwurf'))));
+      } }), STATUS_NAME[s]))),
+    h('p', { class: 'hinweis', text: 'Mit Link: nur sichtbar für Freigabelinks, die dieses Album enthalten (unter „Freigaben“).' }));
 
   /* Fotos */
   const raster = h('div', { class: 'raster' });
@@ -600,6 +613,93 @@ function sortierbar(raster, fertig) {
   raster.addEventListener('pointercancel', ende);
 }
 
+/* ---------- Freigaben: geheime Links zur ganzen Website mit zusätzlichen Alben ---------- */
+
+function freigabeUrl(f) {
+  const basis = location.href.replace(/admin\/.*$/, '');
+  return `${basis}?f=${f.token}`;
+}
+
+async function kopieren(text) {
+  try { await navigator.clipboard.writeText(text); meldung('Link kopiert.'); }
+  catch { window.prompt('Link kopieren:', text); }
+}
+
+async function freigabenAnsicht() {
+  try { const d = await api('daten'); STAND = d; } catch { /* mit vorhandenem Stand */ }
+  const linkAlben = STAND.alben.filter(a => a.status === 'link').sort((a, b) => (b.jahr - a.jahr) || (b.monat - a.monat));
+  const liste = h('div', { class: 'freigaben' });
+  const neuZeichnen = () => freigabenAnsicht();
+
+  const speichern = async (f, still = false) => {
+    try {
+      const r = await api('freigabe_speichern', { daten: { id: f.id, name: f.name, alben: f.alben, aktiv: f.aktiv } });
+      Object.assign(f, r.freigabe);
+      if (!still) meldung('Freigabe gespeichert.');
+      return true;
+    } catch (err) { meldung(err.message, 'fehler'); return false; }
+  };
+
+  for (const f of STAND.freigaben || []) {
+    const karte = h('section', { class: `freigabe${f.aktiv ? '' : ' aus'}` });
+    const name = h('input', { type: 'text', maxlength: '60', value: f.name, 'aria-label': 'Name der Freigabe' });
+    name.addEventListener('change', async () => { f.name = name.value.trim() || f.name; await speichern(f); });
+    const aktiv = h('input', { type: 'checkbox', checked: f.aktiv });
+    aktiv.addEventListener('change', async () => {
+      f.aktiv = aktiv.checked;
+      karte.classList.toggle('aus', !f.aktiv);
+      await speichern(f);
+    });
+    const url = h('input', { type: 'text', readonly: true, value: freigabeUrl(f), 'aria-label': 'Freigabelink', onfocus: e => e.target.select() });
+    const auswahl = h('div', { class: 'f-alben' });
+    if (!linkAlben.length) auswahl.append(h('p', { class: 'hinweis', text: 'Noch kein Album mit Status „Mit Link“. Den Status stellst du im Album ein.' }));
+    for (const a of linkAlben) {
+      const box = h('input', { type: 'checkbox', checked: f.alben.includes(a.nr) });
+      box.addEventListener('change', async () => {
+        f.alben = box.checked ? [...new Set([...f.alben, a.nr])] : f.alben.filter(x => x !== a.nr);
+        await speichern(f, true);
+        zaehler.textContent = anzahlText(f);
+      });
+      auswahl.append(h('label', { class: 'f-album' }, box,
+        h('span', { class: 'f-titel', text: a.titel }),
+        h('span', { class: 'f-datum zahl', text: `${MON[a.monat - 1]} ${a.jahr}` })));
+    }
+    const anzahlText = x => `${x.alben.length} ${x.alben.length === 1 ? 'zusätzliches Album' : 'zusätzliche Alben'} · alle öffentlichen Alben immer dabei`;
+    const zaehler = h('p', { class: 'hinweis', text: anzahlText(f) });
+    let loeschenBereit = false;
+    const loeschen = h('button', { type: 'button', class: 'link gefahr', text: 'Freigabe löschen' });
+    loeschen.addEventListener('click', async () => {
+      if (!loeschenBereit) { loeschenBereit = true; loeschen.textContent = 'Wirklich löschen? Der Link funktioniert dann nicht mehr.'; return; }
+      try { await api('freigabe_loeschen', { daten: { id: f.id } }); meldung('Freigabe gelöscht.'); neuZeichnen(); } catch (err) { meldung(err.message, 'fehler'); }
+    });
+    const erneuern = h('button', { type: 'button', class: 'link', text: 'Neuen Link erzeugen' });
+    erneuern.addEventListener('click', async () => {
+      if (!confirm('Neuen Link erzeugen? Der bisherige Link funktioniert danach nicht mehr.')) return;
+      try { const r = await api('freigabe_erneuern', { daten: { id: f.id } }); Object.assign(f, r.freigabe); url.value = freigabeUrl(f); meldung('Neuer Link erzeugt.'); } catch (err) { meldung(err.message, 'fehler'); }
+    });
+    karte.append(
+      h('div', { class: 'f-kopf' }, name, h('label', { class: 'f-aktiv' }, aktiv, h('span', { text: 'aktiv' }))),
+      h('div', { class: 'f-link' }, url, knopf('Kopieren', () => kopieren(url.value))),
+      h('h3', { class: 'label', text: 'Zusätzliche Alben' }),
+      auswahl, zaehler,
+      h('div', { class: 'f-aktionen' }, erneuern, loeschen));
+    liste.append(karte);
+  }
+  if (!(STAND.freigaben || []).length) liste.append(h('p', { class: 'leer', text: 'Noch keine Freigaben. Eine Freigabe ist ein geheimer Link zur ganzen Website, der zusätzlich ausgewählte Alben zeigt – zum Beispiel für Familie oder Freunde.' }));
+
+  const neu = async () => {
+    const n = (STAND.freigaben || []).length + 1;
+    const f = { id: '', name: `Freigabe ${n}`, alben: [], aktiv: true };
+    if (await speichern(f, true)) { meldung('Freigabe angelegt.'); neuZeichnen(); }
+  };
+  seite(
+    h('header', { class: 'kopf' },
+      h('p', { class: 'kicker', text: 'Verwaltung' }),
+      h('div', { class: 'kopfzeile' }, h('h1', { text: 'Freigaben' }), knopf('+ Neuer Link', neu))),
+    liste,
+    navigation('freigaben'));
+}
+
 function einstellungenAnsicht() {
   const e = { ...STAND.einstellungen };
   const ueber = h('textarea', { rows: '6', oninput: () => { e.ueber = ueber.value; } });
@@ -646,6 +746,7 @@ function route() {
   const [a, b] = location.hash.replace(/^#\/?/, '').split('/');
   if (a === 'album') albumAnsicht(b === 'neu' ? null : Number(b));
   else if (a === 'einstellungen') einstellungenAnsicht();
+  else if (a === 'freigaben') freigabenAnsicht();
   else listeAnsicht();
   letzterHash = location.hash;
 }

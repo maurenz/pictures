@@ -32,8 +32,9 @@
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; touch-action: pan-x pan-y; overscroll-behavior: none; }
 body { overscroll-behavior: none; }
+html { height: 100%; }
 body {
-  min-height: 100vh; min-height: 100svh;
+  min-height: 100%;
   display: flex; flex-direction: column;
   margin: 0;
   background: var(--weiss);
@@ -90,7 +91,9 @@ main#haupt { flex: 1 0 auto; }
 
 /* Globus-Ansicht: feste Seite ohne Scrollen und ohne Fuß */
 html.fest, html.fest body { height: 100%; overflow: hidden; overscroll-behavior: none; }
-html.fest body { height: 100vh; height: 100svh; }
+/* Am Sichtbereich festmachen statt an vh: als App vom Home-Bildschirm rechnet iOS die Statusleiste
+   in 100vh/100svh mit ein, dann wäre der untere Rand abgeschnitten */
+html.fest body { position: fixed; inset: 0; height: auto; min-height: 0; }
 html.fest main#haupt { flex: 1 1 0; min-height: 0; }
 html.fest .fuss, html.ohne-fuss .fuss { display: none; }
 html.fest .ansichten, html.fest .ansicht[data-ansicht="globus"] { height: 100%; }

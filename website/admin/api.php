@@ -178,6 +178,7 @@ if ($aktion === 'daten') {
         'einstellungen' => $db['einstellungen'],
         'naechstesAlbum' => $db['naechstesAlbum'],
         'nummern'       => (object) nummern($db),
+        'freigaben'     => $db['freigaben'] ?? [],
         'reihenfolge'   => array_map(fn($a) => (int) $a['nr'], zeitlich_ordnen($db['alben'])),
         'format'        => bild_format(),
     ]);
@@ -198,7 +199,7 @@ if ($aktion === 'album_speichern' && $methode === 'POST') {
         fehler('Bitte ein gültiges Jahr eingeben.');
     }
     $ort = ort_bereinigen($e['ort'] ?? null);
-    $status = ($e['status'] ?? '') === 'online' ? 'online' : 'entwurf';
+    $status = in_array($e['status'] ?? '', ['online', 'link'], true) ? $e['status'] : 'entwurf';
     $felder = [
         'titel'  => $titel,
         'monat'  => $monat,
@@ -251,6 +252,10 @@ if ($aktion === 'album_loeschen' && $methode === 'POST') {
     mit_db(function (array &$db) use ($nr) {
         album_finden($db, $nr);
         $db['alben'] = array_values(array_filter($db['alben'], fn($a) => (int) $a['nr'] !== $nr));
+        foreach ($db['freigaben'] as &$f) {
+            $f['alben'] = array_values(array_filter($f['alben'] ?? [], fn($x) => (int) $x !== $nr));
+        }
+        unset($f);
     });
     ordner_loeschen(MEDIEN . '/' . $nr);
     antwort(['ok' => true]);
@@ -295,6 +300,60 @@ if ($aktion === 'foto_hochladen' && $methode === 'POST') {
         $a['geaendert'] = date('c');
     });
     antwort(['ok' => true, 'foto' => $foto]);
+}
+
+/* ---------- Freigabelinks: je Link ein Name und mehrere Alben ---------- */
+
+if ($aktion === 'freigabe_speichern' && $methode === 'POST') {
+    $e = eingabe();
+    $id = preg_replace('/[^a-f0-9]/', '', (string) ($e['id'] ?? ''));
+    $name = text($e['name'] ?? '', 60);
+    if ($name === '') {
+        fehler('Bitte einen Namen für die Freigabe eingeben.');
+    }
+    $wahl = array_values(array_unique(array_map('intval', is_array($e['alben'] ?? null) ? $e['alben'] : [])));
+    $aktiv = !empty($e['aktiv']);
+    $freigabe = mit_db(function (array &$db) use ($id, $name, $wahl, $aktiv) {
+        $vorhanden = array_map(fn($a) => (int) $a['nr'], $db['alben']);
+        $wahl = array_values(array_filter($wahl, fn($nr) => in_array($nr, $vorhanden, true)));
+        $db['freigaben'] = $db['freigaben'] ?? [];
+        foreach ($db['freigaben'] as &$f) {
+            if ($id !== '' && $f['id'] === $id) {
+                $f = array_merge($f, ['name' => $name, 'alben' => $wahl, 'aktiv' => $aktiv, 'geaendert' => date('c')]);
+                return $f;
+            }
+        }
+        unset($f);
+        $neu = ['id' => bin2hex(random_bytes(6)), 'token' => freigabe_token(), 'name' => $name, 'alben' => $wahl,
+            'aktiv' => $aktiv, 'erstellt' => date('c'), 'geaendert' => date('c')];
+        $db['freigaben'][] = $neu;
+        return $neu;
+    });
+    antwort(['ok' => true, 'freigabe' => $freigabe]);
+}
+
+if ($aktion === 'freigabe_erneuern' && $methode === 'POST') {
+    // neuer Schlüssel: der bisherige Link funktioniert nicht mehr
+    $id = preg_replace('/[^a-f0-9]/', '', (string) (eingabe()['id'] ?? ''));
+    $freigabe = mit_db(function (array &$db) use ($id) {
+        foreach ($db['freigaben'] ?? [] as $i => $f) {
+            if ($f['id'] === $id) {
+                $db['freigaben'][$i]['token'] = freigabe_token();
+                $db['freigaben'][$i]['geaendert'] = date('c');
+                return $db['freigaben'][$i];
+            }
+        }
+        fehler('Freigabe nicht gefunden.', 404);
+    });
+    antwort(['ok' => true, 'freigabe' => $freigabe]);
+}
+
+if ($aktion === 'freigabe_loeschen' && $methode === 'POST') {
+    $id = preg_replace('/[^a-f0-9]/', '', (string) (eingabe()['id'] ?? ''));
+    mit_db(function (array &$db) use ($id) {
+        $db['freigaben'] = array_values(array_filter($db['freigaben'] ?? [], fn($f) => $f['id'] !== $id));
+    });
+    antwort(['ok' => true]);
 }
 
 if ($aktion === 'foto_loeschen' && $methode === 'POST') {

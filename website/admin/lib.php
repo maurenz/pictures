@@ -10,9 +10,10 @@ const SPEICHER    = WURZEL . '/storage';
 const DB_DATEI    = SPEICHER . '/db.json';
 const LOCK_DATEI  = SPEICHER . '/db.lock';
 const EXPORT      = WURZEL . '/data/site.json';
+const FREIGABEN   = WURZEL . '/data/f';        // je Freigabelink eine Datei <token>.json
 const MEDIEN      = WURZEL . '/media';
-const GROESSEN    = [2560, 1600, 800, 400];
-const MAX_KANTE   = 2560;
+const GROESSEN    = [4096, 2560, 1600, 800, 400]; // 4096 nur für den Zoom
+const MAX_KANTE   = 4096;
 const MONATE      = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 
 ini_set('display_errors', '0');
@@ -107,6 +108,7 @@ function db_leer(): array
         'passwort'       => null,
         'naechstesAlbum' => 1,
         'alben'          => [],
+        'freigaben'      => [],
         'einstellungen'  => [
             'ueber'       => '',
             'kontakt'     => '',
@@ -290,10 +292,11 @@ function zeitlich_ordnen(array $alben): array
     return $aus;
 }
 
-/** Albumnummern in zeitlicher Reihenfolge (ältestes = 1), nur veröffentlichte Alben mit Fotos */
-function nummern(array $db): array
+/** Albumnummern in zeitlicher Reihenfolge (ältestes = 1), nur sichtbare Alben mit Fotos.
+    Ohne Freigabe: nur öffentliche; mit Freigabe: öffentliche plus die freigegebenen. */
+function nummern(array $db, ?array $freigabe = null): array
 {
-    $liste = zeitlich_ordnen(array_filter($db['alben'], fn($a) => ($a['status'] ?? '') === 'online' && !empty($a['fotos'])));
+    $liste = zeitlich_ordnen(array_filter($db['alben'], fn($a) => album_sichtbar($a, $freigabe)));
     $n = [];
     foreach ($liste as $i => $a) {
         $n[(int) $a['nr']] = $i + 1;
@@ -301,12 +304,54 @@ function nummern(array $db): array
     return $n;
 }
 
+/** Sichtbar für alle (öffentlich) oder für eine bestimmte Freigabe (zusätzlich deren Alben mit Status „Mit Link“) */
+function album_sichtbar(array $a, ?array $freigabe = null): bool
+{
+    if (empty($a['fotos'])) {
+        return false;
+    }
+    $status = $a['status'] ?? '';
+    if ($status === 'online') {
+        return true;
+    }
+    return $freigabe !== null && $status === 'link' && in_array((int) $a['nr'], array_map('intval', $freigabe['alben'] ?? []), true);
+}
+
+/** Zufälliger, nicht erratbarer Schlüssel für Freigabelinks (128 Bit, URL-tauglich) */
+function freigabe_token(): string
+{
+    return rtrim(strtr(base64_encode(random_bytes(16)), '+/', '-_'), '=');
+}
+
 function exportieren(array $db): void
 {
+    exportieren_fuer($db, null, EXPORT);
+    // je aktiver Freigabe eine eigene Datendatei; nicht mehr gültige Dateien entfernen
+    if (!is_dir(FREIGABEN)) {
+        @mkdir(FREIGABEN, 0755, true);
+    }
+    $gueltig = [];
+    foreach ($db['freigaben'] ?? [] as $f) {
+        if (empty($f['aktiv']) || !preg_match('/^[A-Za-z0-9_-]{16,64}$/', (string) ($f['token'] ?? ''))) {
+            continue;
+        }
+        $datei = FREIGABEN . '/' . $f['token'] . '.json';
+        exportieren_fuer($db, $f, $datei);
+        $gueltig[] = realpath($datei);
+    }
+    foreach (glob(FREIGABEN . '/*.json') ?: [] as $datei) {
+        if (!in_array(realpath($datei), $gueltig, true)) {
+            @unlink($datei);
+        }
+    }
+}
+
+function exportieren_fuer(array $db, ?array $freigabe, string $ziel): void
+{
     $alben = [];
-    $nummern = nummern($db);
+    $nummern = nummern($db, $freigabe);
     foreach ($db['alben'] as $a) {
-        if (($a['status'] ?? '') !== 'online' || empty($a['fotos'])) {
+        if (!album_sichtbar($a, $freigabe)) {
             continue;
         }
         $alben[] = album_oeffentlich($a) + ['nummer' => $nummern[(int) $a['nr']] ?? null];
@@ -322,10 +367,10 @@ function exportieren(array $db): void
         ],
         'alben'   => $alben,
     ];
-    if (!is_dir(dirname(EXPORT))) {
-        @mkdir(dirname(EXPORT), 0755, true);
+    if (!is_dir(dirname($ziel))) {
+        @mkdir(dirname($ziel), 0755, true);
     }
-    atomar_schreiben(EXPORT, (string) json_encode($export, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    atomar_schreiben($ziel, (string) json_encode($export, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 }
 
 /* ------------------------------------------------------------------ */
@@ -456,7 +501,7 @@ function skalieren(GdImage $bild, int $lange): GdImage
 /** Erzeugt alle Webgrößen. Gibt [w, h, ext, groessen] zurück. */
 function bild_verarbeiten(string $quelle, string $zielOrdner, int $fotoNr): array
 {
-    @ini_set('memory_limit', '256M');
+    @ini_set('memory_limit', '384M');
     @set_time_limit(120);
     $info = @getimagesize($quelle);
     if (!$info || !in_array($info[2], [IMAGETYPE_JPEG, IMAGETYPE_PNG, IMAGETYPE_WEBP], true)) {
@@ -490,7 +535,8 @@ function bild_verarbeiten(string $quelle, string $zielOrdner, int $fotoNr): arra
         }
         $v = skalieren($bild, $g);
         $datei = "$basis-$g.$ext";
-        $ok = $ext === 'webp' ? imagewebp($v, $datei, $g >= 1600 ? 80 : 78) : imagejpeg($v, $datei, 84);
+        // Zoomstufe etwas stärker komprimiert, sie wird nur beim Hineinzoomen geladen
+        $ok = $ext === 'webp' ? imagewebp($v, $datei, $g > 2560 ? 76 : ($g >= 1600 ? 80 : 78)) : imagejpeg($v, $datei, $g > 2560 ? 80 : 84);
         if (!$ok) {
             fehler('Bild konnte nicht gespeichert werden.', 500);
         }

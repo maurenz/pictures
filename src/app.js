@@ -53,7 +53,35 @@ const ruhig = () => RUHIG.matches;
 const speicher = {
   lies(k) { try { return localStorage.getItem(k); } catch { return null; } },
   schreib(k, v) { try { localStorage.setItem(k, v); } catch { /* egal */ } },
+  weg(k) { try { localStorage.removeItem(k); } catch { /* egal */ } },
 };
+
+/* Freigabelink: ?f=<Schlüssel> zeigt zusätzlich die freigegebenen Alben. Der Schlüssel wird gemerkt,
+   damit die Freigabe auch beim nächsten Besuch (oder als App vom Home-Bildschirm) gilt. */
+const FREIGABE_MUSTER = /^[A-Za-z0-9_-]{16,64}$/;
+function freigabeSchluessel() {
+  const ausUrl = new URLSearchParams(location.search).get('f');
+  if (ausUrl && FREIGABE_MUSTER.test(ausUrl)) { speicher.schreib('freigabe', ausUrl); return ausUrl; }
+  const gemerkt = speicher.lies('freigabe');
+  return gemerkt && FREIGABE_MUSTER.test(gemerkt) ? gemerkt : null;
+}
+
+async function datenLaden() {
+  const schluessel = freigabeSchluessel();
+  if (schluessel) {
+    try {
+      const r = await fetch(`data/f/${schluessel}.json`, { cache: 'no-cache' });
+      if (r.ok) return await r.json();
+      // Freigabe gelöscht oder erneuert: vergessen und die öffentliche Seite zeigen
+      if (r.status === 404) speicher.weg('freigabe');
+    } catch { /* weiter mit der öffentlichen Seite */ }
+  }
+  try {
+    const r = await fetch('data/site.json', { cache: 'no-cache' });
+    if (r.ok) return await r.json();
+  } catch { /* leer */ }
+  return null;
+}
 
 /* ================================================================== */
 /* Daten                                                               */
@@ -132,12 +160,18 @@ function datenVorbereiten(roh) {
 }
 
 function bildUrl(album, foto, groesse) {
-  const verf = foto.groessen && foto.groessen.length ? foto.groessen : [groesse];
+  const alle = foto.groessen && foto.groessen.length ? foto.groessen : [groesse];
+  const verf = alle.filter(g => g <= ANZEIGE_MAX).length ? alle.filter(g => g <= ANZEIGE_MAX) : alle;
   const g = verf.find(x => x >= groesse) || verf[verf.length - 1];
   return `media/${album.nr}/${pad(foto.nr, 3)}-${g}.${foto.ext || 'webp'}`;
 }
+const ANZEIGE_MAX = 2560; // größere Stufen gibt es nur für den Zoom
+function zoomUrl(album, foto) {
+  const g = Math.max(...(foto.groessen || [0]));
+  return g > ANZEIGE_MAX ? `media/${album.nr}/${pad(foto.nr, 3)}-${g}.${foto.ext || 'webp'}` : null;
+}
 function srcset(album, foto) {
-  return (foto.groessen || []).map(g => {
+  return (foto.groessen || []).filter(g => g <= ANZEIGE_MAX).map(g => {
     const breite = foto.w >= foto.h ? g : Math.round(g * foto.w / foto.h);
     return `media/${album.nr}/${pad(foto.nr, 3)}-${g}.${foto.ext || 'webp'} ${breite}w`;
   }).join(', ');
@@ -1040,8 +1074,18 @@ function zeitstrahlBauen(alben) {
   return el;
 }
 
+/* Bei jedem erneuten Öffnen: Linie und Einträge noch einmal aufbauen (nicht bei aktivem Filter) */
+function zeitstrahlNeu(el) {
+  if (!el.offsetParent || el.querySelector('.aus')) return zeitstrahlStarten(el);
+  el.classList.remove('laeuft', 'fertig');
+  for (const l of el.querySelectorAll('.linie')) l.style.transform = 'scaleY(0)';
+  void el.offsetWidth; // Animationen der Einträge neu anstoßen
+  zeitstrahlStarten(el);
+}
+
 function zeitstrahlStarten(el) {
   if (el.classList.contains('laeuft') || !el.offsetParent) return;
+  const lauf = el._lauf = (el._lauf || 0) + 1; // ein neuer Durchlauf beendet den alten
   // Die Linie fließt in einem Zug von oben nach unten: sanft anlaufend und sanft auslaufend.
   // Punkt und Titel erscheinen, kurz nachdem die Linie sie erreicht hat.
   const VORLAUF = 14; // Pixel, die die Linie dem Eintrag voraus ist, bevor er erscheint
@@ -1064,7 +1108,9 @@ function zeitstrahlStarten(el) {
   el.classList.add('laeuft');
   if (ruhig()) { el.classList.add('fertig'); return; }
   const t0 = performance.now();
+  for (const t of teile) t.linie.style.transform = 'scaleY(0)';
   const schritt = jetzt => {
+    if (el._lauf !== lauf) return;
     if (el.classList.contains('fertig')) { for (const t of teile) t.linie.style.transform = ''; return; }
     const t = Math.min(1, (jetzt - t0) / 1000 / dauer);
     const y = gesamt * (1 - Math.cos(Math.PI * t)) / 2;
@@ -1355,6 +1401,7 @@ function ansichtSetzen(neu) {
   document.documentElement.classList.toggle('ohne-fuss', neu === 'zeit');
   if (neu === 'globus') window.scrollTo(0, 0);
   const reihenfolge = ['zeit', 'globus', 'bogen'];
+  const zeitWarAn = !!app.zeitstrahl && !!app.zeitstrahl.offsetParent;
   const kombi = DESKTOP.matches && neu !== 'bogen';
   app.ansichten.classList.toggle('kombi', kombi);
   for (const el of app.ansichten.children) {
@@ -1369,7 +1416,8 @@ function ansichtSetzen(neu) {
     app.ansichten.querySelector('[data-ansicht="bogen"]').append(app.bogen);
   }
   requestAnimationFrame(() => {
-    if (app.zeitstrahl) zeitstrahlStarten(app.zeitstrahl);
+    // Zeitstrahl wieder sichtbar geworden: Linie und Einträge neu aufbauen
+    if (app.zeitstrahl) (zeitWarAn ? zeitstrahlStarten : zeitstrahlNeu)(app.zeitstrahl);
     if (app.globus && app.globus.el.offsetParent) { app.globus.render(); app.globus.starten(); }
     if (app.bogen && app.bogen.offsetParent) app.bogen.classList.add('laeuft');
   });
@@ -1451,7 +1499,6 @@ class AlbumAnsicht {
       this.infoEl);
     this.el.querySelector('.album-zurueck-oben span').innerHTML = ICON.links;
     this.wischenEinrichten();
-    this.radZoomEinrichten();
   }
 
   titelFuerUebergang() { return DESKTOP.matches ? this.titelDesk : this.titelMobil; }
@@ -1601,6 +1648,22 @@ class AlbumAnsicht {
     this.zoom = { img, s: 1, tx: 0, ty: 0 };
     this.zoomBasis(zeiger);
     this.el.classList.add('zoomt');
+    this.zoomBildLaden(this.aktuell);
+  }
+
+  /* beim ersten Zoom die hochaufgelöste Stufe laden und unbemerkt austauschen, sobald sie bereitliegt */
+  zoomBildLaden(dia) {
+    const url = dia && zoomUrl(this.a, dia.foto);
+    if (!url || dia.hoch) return;
+    dia.hoch = true;
+    const gross = new Image();
+    gross.decoding = 'async';
+    gross.onload = () => {
+      const fertig = () => { dia.img.removeAttribute('srcset'); dia.img.src = url; };
+      if (gross.decode) gross.decode().then(fertig, fertig); else fertig();
+    };
+    gross.onerror = () => { dia.hoch = false; };
+    gross.src = url;
   }
 
   zoomBasis(zeiger) {
@@ -1623,58 +1686,6 @@ class AlbumAnsicht {
     z.tx = b.tx + m.x - b.m.x;
     z.ty = b.ty + m.y - b.m.y;
     z.img.style.transform = `translate(${z.tx}px, ${z.ty}px) scale(${z.s})`;
-  }
-
-  /* Desktop: Zoom mit Trackpad (zwei Finger) oder Strg + Mausrad. Springt zurück, sobald das Trackpad
-     losgelassen bzw. Strg losgelassen wird – wie der Zwei-Finger-Zoom am Handy. */
-  radZoomEinrichten() {
-    const b = this.buehne;
-    let strgGedrueckt = false, ruhe = null;
-    const start = (x, y) => {
-      const img = this.aktuell && this.aktuell.img;
-      if (!img || this.wechsel) return false;
-      if (!this.zoom) {
-        const r = img.getBoundingClientRect();
-        img.style.transition = 'none';
-        img.style.transformOrigin = `${x - r.left}px ${y - r.top}px`;
-        this.zoom = { img, s: 1, tx: 0, ty: 0, rad: true };
-        this.el.classList.add('zoomt');
-      }
-      return true;
-    };
-    const setzen = s => {
-      const z = this.zoom;
-      z.s = Math.max(1, Math.min(5, s));
-      z.img.style.transform = `scale(${z.s})`;
-    };
-    // Ende: ohne gedrückte Strg-Taste (Trackpad) kurz nach dem letzten Ereignis, sonst beim Loslassen von Strg
-    const endePlanen = () => {
-      clearTimeout(ruhe);
-      if (!strgGedrueckt) ruhe = setTimeout(() => { if (this.zoom && this.zoom.rad) this.zoomEnde(); }, 220);
-    };
-    b.addEventListener('wheel', e => {
-      if (!e.ctrlKey) return;
-      e.preventDefault();
-      if (!start(e.clientX, e.clientY)) return;
-      const dy = Math.max(-25, Math.min(25, e.deltaY * (e.deltaMode === 1 ? 16 : 1)));
-      setzen(this.zoom.s * Math.exp(-dy * 0.01));
-      endePlanen();
-    }, { passive: false });
-    // Safari am Mac meldet das Trackpad als Geste statt als Rad
-    let gesteBasis = 1;
-    b.addEventListener('gesturestart', e => { e.preventDefault(); if (start(e.clientX, e.clientY)) gesteBasis = this.zoom.s; }, { passive: false });
-    b.addEventListener('gesturechange', e => { e.preventDefault(); if (this.zoom && this.zoom.rad) setzen(gesteBasis * e.scale); }, { passive: false });
-    b.addEventListener('gestureend', e => { e.preventDefault(); if (this.zoom && this.zoom.rad) this.zoomEnde(); }, { passive: false });
-    this.strgRunter = e => { if (e.key === 'Control') strgGedrueckt = true; };
-    this.strgHoch = e => {
-      if (e.key !== 'Control') return;
-      strgGedrueckt = false;
-      if (this.zoom && this.zoom.rad) this.zoomEnde();
-    };
-    addEventListener('keydown', this.strgRunter);
-    addEventListener('keyup', this.strgHoch);
-    this.strgWeg = () => this.strgHoch({ key: 'Control' });
-    addEventListener('blur', this.strgWeg);
   }
 
   zoomEnde() {
@@ -1801,7 +1812,6 @@ class AlbumAnsicht {
     document.removeEventListener('keydown', this.autoNeu);
     document.removeEventListener('keydown', this.tasten);
     removeEventListener('resize', this.groesse);
-    if (this.strgRunter) { removeEventListener('keydown', this.strgRunter); removeEventListener('keyup', this.strgHoch); removeEventListener('blur', this.strgWeg); }
     this.el.remove();
   }
 }
@@ -1992,10 +2002,7 @@ async function start() {
   // Beim Laden immer mit dem Globus beginnen (Direktlinks auf Alben und Textseiten bleiben erhalten)
   const ziel = location.hash.replace(/^#\/?/, '').split('/')[0];
   if (!['album', 'vorschau', 'ueber', 'impressum', 'datenschutz'].includes(ziel) && location.hash && location.hash !== '#/') history.replaceState(null, '', '#/');
-  try {
-    const r = await fetch('data/site.json', { cache: 'no-cache' });
-    if (r.ok) DATEN = await r.json();
-  } catch { /* leer */ }
+  DATEN = (await datenLaden()) || DATEN;
   ALBEN = datenVorbereiten(DATEN);
   app.punkte = punkteBilden(ALBEN);
   document.body.dataset.titel = document.title;
