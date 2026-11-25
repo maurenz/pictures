@@ -223,6 +223,7 @@ function einrichtenAnsicht() {
     if (pw.value !== pw2.value) { meldung('Die Passwörter stimmen nicht überein.', 'fehler'); return; }
     try {
       const r = await api('einrichten', { daten: { code: code.value, passwort: pw.value } });
+      besitzerMerken(r.besitzer);
       CSRF = r.csrf;
       meldung('Verwaltung eingerichtet.');
       location.hash = '#/';
@@ -246,6 +247,7 @@ function loginAnsicht() {
     e.preventDefault();
     try {
       const r = await api('anmelden', { daten: { passwort: pw.value } });
+      besitzerMerken(r.besitzer);
       CSRF = r.csrf;
       start();
     } catch (err) { meldung(err.message, 'fehler'); pw.select(); }
@@ -263,7 +265,8 @@ function navigation(aktiv) {
     h('a', { href: '#/', 'aria-current': aktiv === 'alben' ? 'page' : null, text: 'Alben' }),
     h('a', { href: '#/freigaben', 'aria-current': aktiv === 'freigaben' ? 'page' : null, text: 'Freigaben' }),
     h('a', { href: '#/einstellungen', 'aria-current': aktiv === 'einstellungen' ? 'page' : null, text: 'Einstellungen' }),
-    h('a', { href: '../', target: '_blank', rel: 'noopener', text: 'Website ↗' }));
+    // in der Web-App vom Home-Bildschirm im selben Fenster bleiben (ein neues Fenster wäre Safari ohne Anmeldung)
+    h('a', { href: '../', target: imApp() ? null : '_blank', rel: 'noopener', text: imApp() ? 'Website' : 'Website ↗' }));
 }
 
 async function listeAnsicht() {
@@ -744,9 +747,9 @@ function einstellungenAnsicht() {
   const neu2 = h('input', { type: 'password', autocomplete: 'new-password' });
   const pwAendern = async () => {
     if (neu.value !== neu2.value) { meldung('Die neuen Passwörter stimmen nicht überein.', 'fehler'); return; }
-    try { await api('passwort', { daten: { alt: alt.value, neu: neu.value } }); alt.value = neu.value = neu2.value = ''; meldung('Passwort geändert.'); } catch (err) { meldung(err.message, 'fehler'); }
+    try { const r = await api('passwort', { daten: { alt: alt.value, neu: neu.value } }); besitzerMerken(r.besitzer); alt.value = neu.value = neu2.value = ''; meldung('Passwort geändert.'); } catch (err) { meldung(err.message, 'fehler'); }
   };
-  const abmelden = async () => { try { await api('abmelden', { daten: {} }); } catch { /* egal */ } start(); };
+  const abmelden = async () => { try { await api('abmelden', { daten: {} }); } catch { /* egal */ } besitzerMerken(null); start(); };
   seite(
     h('header', { class: 'kopf' }, h('p', { class: 'kicker', text: 'Verwaltung' }), h('h1', { text: 'Einstellungen' })),
     h('form', { class: 'formular', onsubmit: ev => ev.preventDefault() },
@@ -803,6 +806,17 @@ async function regionenNachtragen() {
   regionenLaeuft = false;
 }
 
+/* Besitzeransicht: nach dem Anmelden zeigt die Website auf diesem Gerät alle Alben (auch Entwürfe und „Mit Link“),
+   auch in der Web-App vom Home-Bildschirm. Gilt bis zum Abmelden oder bis zum nächsten Passwortwechsel. */
+const imApp = () => !!(navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches));
+
+function besitzerMerken(token) {
+  try {
+    if (token && /^[A-Za-z0-9_-]{16,64}$/.test(token)) localStorage.setItem('besitzer', token);
+    else localStorage.removeItem('besitzer');
+  } catch { /* privat: ohne Besitzeransicht */ }
+}
+
 /* Farbwerte älterer Fotos (für die Sortierung „Farbe“ im Kontaktbogen) still nachtragen */
 let farbenLaeuft = false;
 async function farbenNachtragen() {
@@ -825,6 +839,7 @@ async function start() {
     if (!s.angemeldet) { loginAnsicht(); return; }
     const d = await api('daten');
     STAND = d;
+    besitzerMerken(d.besitzer);
     if (!s.https) meldung('Achtung: Die Verbindung ist nicht verschlüsselt (kein HTTPS).', 'fehler');
     route();
     setTimeout(regionenNachtragen, 1500);

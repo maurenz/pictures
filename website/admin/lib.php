@@ -312,10 +312,21 @@ function album_sichtbar(array $a, ?array $freigabe = null): bool
         return false;
     }
     $status = $a['status'] ?? '';
-    if ($status === 'online') {
-        return true;
+    if ($status === 'online' || !empty($freigabe['alle'])) {
+        return true; // Besitzeransicht: alle Alben mit Fotos, auch Entwürfe
     }
     return $freigabe !== null && $status === 'link' && in_array((int) $a['nr'], array_map('intval', $freigabe['alben'] ?? []), true);
+}
+
+/** Schlüssel der Besitzeransicht; wird beim ersten Bedarf angelegt (und beim Passwortwechsel erneuert) */
+function besitzer_token(bool $neu = false): string
+{
+    return mit_db(function (array &$db) use ($neu) {
+        if ($neu || !preg_match('/^[A-Za-z0-9_-]{16,64}$/', (string) ($db['besitzerToken'] ?? ''))) {
+            $db['besitzerToken'] = freigabe_token();
+        }
+        return $db['besitzerToken'];
+    });
 }
 
 /** Zufälliger, nicht erratbarer Schlüssel für Freigabelinks (128 Bit, URL-tauglich) */
@@ -332,6 +343,12 @@ function exportieren(array $db): void
         @mkdir(FREIGABEN, 0755, true);
     }
     $gueltig = [];
+    // Besitzeransicht nach dem Anmelden (auch in der Web-App vom Home-Bildschirm): alle Alben
+    if (preg_match('/^[A-Za-z0-9_-]{16,64}$/', (string) ($db['besitzerToken'] ?? ''))) {
+        $datei = FREIGABEN . '/' . $db['besitzerToken'] . '.json';
+        exportieren_fuer($db, ['alle' => true], $datei);
+        $gueltig[] = realpath($datei);
+    }
     foreach ($db['freigaben'] ?? [] as $f) {
         if (empty($f['aktiv']) || !preg_match('/^[A-Za-z0-9_-]{16,64}$/', (string) ($f['token'] ?? ''))) {
             continue;

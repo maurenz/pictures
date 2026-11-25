@@ -222,29 +222,19 @@ html.fest .ansichten, html.fest .ansicht[data-ansicht="globus"] { height: 100%; 
 .blatt-zu { position: absolute; right: 12px; top: 8px; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; }
 
 /* ---------- Kontaktbogen ---------- */
-.bogen { padding: 0 var(--rand) 24px; }
-.bogen-leiste { display: flex; align-items: center; gap: 18px; padding: 6px 0 12px; }
-.bogen-leiste button { min-height: 40px; padding: 0; border: 0; border-bottom: 1px solid transparent; background: none; color: var(--grau); font: inherit; font-size: 15px; font-weight: 300; cursor: pointer; transition: color .2s ease; }
-.bogen-leiste button[aria-pressed="true"] { color: var(--schwarz); font-weight: 600; border-bottom-color: var(--schwarz); }
-.bogen-zahl { margin-left: auto; font-size: 12px; color: var(--grau); white-space: nowrap; }
-.bogen-raster { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; }
-.bogen-jahr { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding: 14px 0 7px; }
-.bogen-jahr:first-child { padding-top: 2px; }
-.bogen-jahr span { font-size: 11px; font-weight: 700; letter-spacing: .16em; color: var(--grau); }
-.bogen-jahr::after { content: ''; flex: 1; height: 1px; background: var(--linie); }
-.bogen-foto { position: relative; display: block; aspect-ratio: 2 / 3; overflow: hidden; background: var(--hellgrau); opacity: 0; -webkit-tap-highlight-color: transparent; }
+.bogen { padding: 4px var(--rand) 24px; }
+.bogen-album { margin-bottom: 30px; }
+.bogen-kopf { display: flex; align-items: baseline; gap: 10px; padding: 10px 0; border-top: 1px solid var(--schwarz); }
+.bogen-kopf .nr { font-size: 13px; font-weight: 700; }
+.bogen-kopf .titel { font-size: 15px; color: var(--grau); }
+.bogen-kopf .datum { margin-left: auto; font-size: 12px; font-weight: 600; letter-spacing: .1em; color: var(--grau); }
+.bogen-raster { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.bogen-foto { display: flex; flex-direction: column; gap: 3px; opacity: 0; }
 .bogen.laeuft .bogen-foto { animation: blende .5s ease both; }
-.bogen-foto img { width: 100%; height: 100%; object-fit: cover; transition: transform .4s var(--aus), opacity .25s ease; }
-.bogen-info { position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; gap: 1px; padding: 26px 8px 7px; background: linear-gradient(to top, rgba(17, 17, 17, .72), rgba(17, 17, 17, 0)); color: #fff; opacity: 0; transition: opacity .25s ease; pointer-events: none; }
-.bogen-info .t { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bogen-info .n { font-size: 10px; letter-spacing: .08em; }
-.bogen-foto.gewaehlt .bogen-info { opacity: 1; }
-.bogen-raster:has(.gewaehlt) .bogen-foto:not(.gewaehlt) img { opacity: .55; }
-@media (hover: hover) and (pointer: fine) {
-  .bogen-foto:hover img { transform: scale(1.04); }
-  .bogen-foto:hover .bogen-info { opacity: 1; }
-}
-.bogen-wache { height: 1px; }
+.bogen-foto .bild { aspect-ratio: 2 / 3; background: var(--hellgrau); overflow: hidden; }
+.bogen-foto img { width: 100%; height: 100%; object-fit: cover; transition: transform .4s var(--aus); }
+.bogen-foto:hover img { transform: scale(1.04); }
+.bogen-foto .fnr { font-size: 10px; color: var(--grau); }
 /* Zeitstrahl: weicher Verlauf am unteren Rand, solange weitere Einträge folgen */
 .ansicht[data-ansicht="zeit"]::after { content: ''; position: sticky; bottom: 0; display: block; height: 56px; margin-top: -56px; background: linear-gradient(to bottom, rgba(255, 255, 255, 0), #fff); pointer-events: none; }
 
@@ -361,7 +351,9 @@ html.fest .ansichten, html.fest .ansicht[data-ansicht="globus"] { height: 100%; 
   .eintrag { height: 60px; }
   .eintrag .titel { font-size: 28px; }
   .jahr-label { height: 28px; font-size: 12px; }
-  .bogen-raster { grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 6px; }
+  .bogen-raster { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; }
+  .bogen-kopf .nr { font-size: 14px; }
+  .bogen-kopf .titel { font-size: 18px; }
   .blatt { position: absolute; left: auto; right: 0; bottom: 0; width: min(420px, 100%); border: 1px solid var(--schwarz); }
 
   .album-oben { padding: 22px 36px 0 24px; }

@@ -125,6 +125,8 @@ Unter **Freigaben** legst du beliebig viele geheime Links an, zum Beispiel „Fa
 - **Neuen Link erzeugen:** Der bisherige Link funktioniert danach nicht mehr (zum Beispiel, wenn er weitergegeben wurde).
 - **Freigabe löschen:** Link und Auswahl werden entfernt.
 
+**Du selbst siehst alles:** Sobald du in der Verwaltung angemeldet bist, zeigt die Website auf diesem Gerät alle Alben – auch Entwürfe und „Mit Link“ –, egal mit welcher Adresse sie geöffnet wird. Das gilt auch für die Web-App vom Home-Bildschirm: dort einmal über „Verwaltung“ (unten im Kontaktbogen) anmelden. Abmelden beendet das auf dem Gerät; ein neues Passwort beendet es auf allen Geräten.
+
 Die Bilddateien selbst sind nicht verschlüsselt: Wer eine genaue Bildadresse kennt, kann ein Bild laden. Die Freigaben verhindern, dass Alben auf der Website auftauchen.
 
 ## Sicherung

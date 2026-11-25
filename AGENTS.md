@@ -32,11 +32,15 @@ Schrift Urbanist (nur serifenlos), Akzentfarbe Orange (#ff6a13). Kein SEO, `noin
    ganzen Website plus den gewählten `link`-Alben. Der Schlüssel hat 128 Bit; die Website merkt ihn im
    `localStorage`. Erneuern/Deaktivieren/Löschen entfernt die Datei `data/f/<token>.json` → alter Link liefert 404.
    Bilddateien selbst sind nicht geschützt (wer die Adresse kennt, kann sie laden) – das ist so gewollt.
+   **Besitzeransicht:** Nach dem Anmelden in der Verwaltung speichert der Browser `localStorage.besitzer`
+   (`db.besitzerToken`); die Website lädt dann `data/f/<besitzerToken>.json` mit allen Alben (auch Entwürfe und
+   „Mit Link“) – wichtig für die Web-App vom Home-Bildschirm, die nur die Hauptadresse öffnet. Abmelden löscht den
+   Schlüssel auf dem Gerät, ein Passwortwechsel erneuert ihn (alte Geräte sehen wieder nur Öffentliches).
 6. **Albumnummern** sind chronologisch (ältestes = 01) über die jeweils sichtbare Menge; Fotonummern folgen der
    Reihenfolge im Album. Nummern auf dem Server werden nie wiederverwendet (`naechstesAlbum`, `naechstesFoto`).
-7. **Kontaktbogen** = Bildindex aller Fotos, sortierbar nach Zeit (mit Jahrestrennern), Farbe oder Zufall
-   (`bogenBauen`). Die Farbe je Foto (`foto.farbe`, Hex) berechnet der Server beim Upload (`bild_farbe`); ältere Fotos
-   trägt die Verwaltung beim Öffnen still nach (`farben_nachtragen`). Kacheln werden in Portionen beim Scrollen gebaut.
+7. **Kontaktbogen** zeigt die Fotos nach Alben gruppiert (`bogenBauen`). Ein sortierbarer Bildindex (Zeit/Farbe/
+   Zufall) wurde ausprobiert und auf Wunsch zurückgenommen; die Farbe je Foto (`foto.farbe`, `bild_farbe`,
+   `farben_nachtragen`) wird weiter berechnet und steht für spätere Ideen bereit.
 8. **Zeitliche Ordnung** im selben Monat: kürzeste Reiseroute (`beste_folge` in PHP und `besteFolge` in JS –
    beide gleich halten).
 

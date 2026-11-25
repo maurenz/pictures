@@ -67,6 +67,15 @@ function freigabeSchluessel() {
 }
 
 async function datenLaden() {
+  // angemeldet (Besitzeransicht): alle Alben, unabhängig von der Adresse, mit der die Seite geöffnet wurde
+  const besitzer = speicher.lies('besitzer');
+  if (besitzer && FREIGABE_MUSTER.test(besitzer)) {
+    try {
+      const r = await fetch(`data/f/${besitzer}.json`, { cache: 'no-cache' });
+      if (r.ok) return await r.json();
+      if (r.status === 404) speicher.weg('besitzer'); // Passwort gewechselt: Ansicht beendet
+    } catch { /* weiter wie ohne Anmeldung */ }
+  }
   const schluessel = freigabeSchluessel();
   if (schluessel) {
     try {
@@ -1135,95 +1144,23 @@ function vorschauBewegen(e) {
 }
 function vorschauVerbergen() { if (vorschauEl) vorschauEl.classList.remove('an'); }
 
-/* Kontaktbogen: alle Fotos als Bildindex, sortierbar nach Zeit (mit Jahren), Farbe oder Zufall.
-   Kacheln werden beim Scrollen in Portionen aufgebaut, Bilder laden erst, wenn sie ins Bild kommen. */
-const BOGEN_SORTEN = [['zeit', 'Zeit'], ['farbe', 'Farbe'], ['zufall', 'Zufall']];
-const BOGEN_PORTION = 90;
-
-/* Sortierschlüssel einer Farbe: Farbton im Kreis, Grautöne (wenig Sättigung) ans Ende, hell vor dunkel */
-function farbSchluessel(hex) {
-  if (!hex || !/^#[0-9a-f]{6}$/i.test(hex)) return 1000;
-  const r = parseInt(hex.slice(1, 3), 16) / 255, g = parseInt(hex.slice(3, 5), 16) / 255, b = parseInt(hex.slice(5, 7), 16) / 255;
-  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
-  if (mx < 0.22 || d / mx < 0.12) return 400 + (1 - mx) * 100; // sehr dunkel oder kaum Farbe: zu den Grautönen
-  const h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
-  return ((h * 60 + 360 + 10) % 360); // Rot knapp unter 0° gehört an den Anfang
-}
-
 function bogenBauen(alben) {
   const el = h('div', { class: 'bogen' });
-  const alle = [];
-  for (const a of alben) a.fotos.forEach((f, k) => alle.push({ a, f, k }));
-  let sorte = BOGEN_SORTEN.some(([k]) => k === speicher.lies('bogenSorte')) ? speicher.lies('bogenSorte') : 'zeit';
-
-  const knoepfe = BOGEN_SORTEN.map(([k, name]) => {
-    const b = h('button', { type: 'button', text: name });
-    b.addEventListener('click', () => {
-      sorte = k;
-      speicher.schreib('bogenSorte', k);
-      zeichnen();
-      const oben = el.getBoundingClientRect().top + scrollY - 120;
-      if (scrollY > oben) scrollTo({ top: Math.max(0, oben), behavior: ruhig() ? 'auto' : 'smooth' });
+  let i = 0;
+  for (const a of alben) {
+    const raster = h('div', { class: 'bogen-raster' });
+    a.fotos.forEach((f, k) => {
+      raster.append(h('a', { class: 'bogen-foto', href: `#/album/${a.nr}/${k + 1}`, 'aria-label': `Foto ${a.nrText}/${pad(k + 1, 3)}`, style: { animationDelay: `${Math.min(i++ * 0.025, 1.2)}s` } },
+        h('span', { class: 'bild' }, h('img', { src: bildUrl(a, f, 400), alt: '', loading: 'lazy', decoding: 'async', width: f.w, height: f.h })),
+        h('span', { class: 'fnr zahl', text: `${a.nrText}/${pad(k + 1, 3)}` })));
     });
-    return [k, b];
-  });
-  const leiste = h('div', { class: 'bogen-leiste', role: 'group', 'aria-label': 'Sortierung' },
-    ...knoepfe.map(([, b]) => b),
-    h('span', { class: 'bogen-zahl', text: `${anzahl(alle.length, 'Foto', 'Fotos')} · ${anzahl(alben.length, 'Album', 'Alben')}` }));
-  const raster = h('div', { class: 'bogen-raster' });
-  const wache = h('div', { class: 'bogen-wache', 'aria-hidden': 'true' });
-  el.append(leiste, raster, wache);
-
-  let liste = [], pos = 0, start = 0;
-  const kachel = ({ a, f, k }, i) => {
-    const nrText = `${a.nrText}/${pad(k + 1, 3)}`;
-    const kn = h('a', { class: 'bogen-foto', href: `#/album/${a.nr}/${k + 1}`, 'aria-label': `${a.titel}, Foto ${nrText}`, style: { animationDelay: `${Math.min((i - start) * 0.018, 0.7)}s` } },
-      h('img', { src: bildUrl(a, f, 400), alt: '', loading: 'lazy', decoding: 'async', width: f.w, height: f.h }),
-      h('span', { class: 'bogen-info', 'aria-hidden': 'true' }, h('span', { class: 't', text: a.titel }), h('span', { class: 'n zahl', text: nrText })));
-    // Touch: erster Tipp zeigt Album und Nummer, zweiter öffnet das Foto
-    kn.addEventListener('click', e => {
-      if (MAUS.matches || kn.classList.contains('gewaehlt')) return;
-      e.preventDefault();
-      for (const x of raster.querySelectorAll('.gewaehlt')) x.classList.remove('gewaehlt');
-      kn.classList.add('gewaehlt');
-    });
-    return kn;
-  };
-  const portion = () => {
-    start = pos;
-    const frag = document.createDocumentFragment();
-    const ende = Math.min(liste.length, pos + BOGEN_PORTION);
-    for (; pos < ende; pos++) {
-      const x = liste[pos];
-      frag.append(x.jahr ? h('div', { class: 'bogen-jahr' }, h('span', { class: 'zahl', text: String(x.jahr) })) : kachel(x, pos));
-    }
-    raster.append(frag);
-    wache.hidden = pos >= liste.length;
-  };
-  const zeichnen = () => {
-    for (const [k, b] of knoepfe) b.setAttribute('aria-pressed', String(k === sorte));
-    if (sorte === 'zeit') {
-      liste = [];
-      let jahr = null;
-      for (const x of alle) {
-        if (x.a.jahr !== jahr) { jahr = x.a.jahr; liste.push({ jahr }); }
-        liste.push(x);
-      }
-    } else if (sorte === 'farbe') {
-      liste = alle.map(x => [farbSchluessel(x.f.farbe), x]).sort((p, q) => p[0] - q[0]).map(p => p[1]);
-    } else {
-      liste = [...alle];
-      for (let i = liste.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [liste[i], liste[j]] = [liste[j], liste[i]]; }
-    }
-    raster.replaceChildren();
-    pos = 0;
-    portion();
-  };
-  if ('IntersectionObserver' in window) {
-    new IntersectionObserver(es => { if (es.some(e => e.isIntersecting) && pos < liste.length) portion(); }, { rootMargin: '900px 0px' }).observe(wache);
+    el.append(h('section', { class: 'bogen-album', 'aria-label': a.titel },
+      h('div', { class: 'bogen-kopf' },
+        h('span', { class: 'nr zahl', text: a.nrText }),
+        h('span', { class: 'titel', text: a.titel }),
+        h('span', { class: 'datum', text: `${a.mon} ${a.jahr}` })),
+      raster));
   }
-  zeichnen();
-  if (!('IntersectionObserver' in window)) while (pos < liste.length) portion();
   return el;
 }
 

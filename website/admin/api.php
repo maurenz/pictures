@@ -128,7 +128,7 @@ if ($aktion === 'einrichten' && $methode === 'POST') {
     session_regenerate_id(true);
     $_SESSION['angemeldet'] = true;
     $_SESSION['csrf'] = bin2hex(random_bytes(32));
-    antwort(['ok' => true, 'csrf' => $_SESSION['csrf']]);
+    antwort(['ok' => true, 'csrf' => $_SESSION['csrf'], 'besitzer' => besitzer_token()]);
 }
 
 if ($aktion === 'anmelden' && $methode === 'POST') {
@@ -149,7 +149,7 @@ if ($aktion === 'anmelden' && $methode === 'POST') {
     session_regenerate_id(true);
     $_SESSION['angemeldet'] = true;
     $_SESSION['csrf'] = bin2hex(random_bytes(32));
-    antwort(['ok' => true, 'csrf' => $_SESSION['csrf']]);
+    antwort(['ok' => true, 'csrf' => $_SESSION['csrf'], 'besitzer' => besitzer_token()]);
 }
 
 /* ------------------------------------------------------------------ */
@@ -179,6 +179,7 @@ if ($aktion === 'daten') {
         'naechstesAlbum' => $db['naechstesAlbum'],
         'nummern'       => (object) nummern($db),
         'freigaben'     => $db['freigaben'] ?? [],
+        'besitzer'      => $db['besitzerToken'] ?? besitzer_token(),
         'reihenfolge'   => array_map(fn($a) => (int) $a['nr'], zeitlich_ordnen($db['alben'])),
         'format'        => bild_format(),
     ]);
@@ -482,7 +483,8 @@ if ($aktion === 'passwort' && $methode === 'POST') {
         $db['passwort'] = hash_erzeugen($neu);
     });
     session_regenerate_id(true);
-    antwort(['ok' => true]);
+    // neues Passwort: auch die Besitzeransicht auf anderen Geräten beenden
+    antwort(['ok' => true, 'besitzer' => besitzer_token(true)]);
 }
 
 if ($aktion === 'ort') {
