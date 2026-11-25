@@ -59,9 +59,11 @@ img { display: block; }
   padding: 18px var(--rand) 10px;
   background: var(--weiss);
 }
-.marke { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.koord { font-size: 16px; font-weight: 300; letter-spacing: .02em; white-space: nowrap; }
-.unterzeile { font-size: 11px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; }
+.marke { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.marke-zeichen { flex: none; width: 30px; height: 30px; overflow: visible; }
+.marke-zeichen path { fill: none; stroke: currentColor; stroke-width: 11; stroke-linecap: round; }
+.marke-zeichen circle { fill: var(--orange); }
+.wortmarke { font-size: 22px; font-weight: 400; line-height: 1; letter-spacing: .02em; white-space: nowrap; margin-top: -3px; }
 
 /* ---------- Umschalter ---------- */
 .umschalter {
@@ -214,6 +216,8 @@ html.fest .ansichten, html.fest .ansicht[data-ansicht="globus"] { height: 100%; 
 .blatt-kopf span { font-size: 13px; color: var(--grau); }
 .blatt-scroll { max-height: calc(5 * 52px); overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; scrollbar-width: none; margin: 0 calc(-1 * var(--rand)); padding: 0 var(--rand); }
 .blatt-scroll::-webkit-scrollbar { display: none; }
+/* mehr als fünf Alben: weicher Verlauf unten wie im Zeitstrahl */
+.blatt-scroll.mehr::after { content: ''; position: sticky; bottom: 0; display: block; height: 44px; margin-top: -44px; background: linear-gradient(to bottom, rgba(255, 255, 255, 0), #fff); pointer-events: none; }
 .blatt-liste { position: relative; }
 .blatt-liste::before { content: ''; position: absolute; left: 45.5px; top: 14px; bottom: 14px; width: 1px; background: var(--schwarz); }
 .blatt-liste .eintrag { opacity: 1; height: 52px; }
@@ -338,7 +342,9 @@ html.fest .ansichten, html.fest .ansicht[data-ansicht="globus"] { height: 100%; 
 @media (min-width: 960px) {
   :root { --rand: 48px; --kopf: 96px; }
   .kopf { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); padding: 26px var(--rand) 18px; }
-  .koord { font-size: 24px; }
+  .marke { gap: 12px; }
+  .marke-zeichen { width: 36px; height: 36px; }
+  .wortmarke { font-size: 26px; }
 
   .ansichten.kombi { display: flex; align-items: stretch; gap: 24px 64px; padding: 4px 0 0 var(--rand); }
   .ansichten.kombi .ansicht[data-ansicht="zeit"], .ansichten.kombi .ansicht[data-ansicht="globus"] { display: block; animation: none; }

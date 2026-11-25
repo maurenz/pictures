@@ -47,7 +47,6 @@ const svgEl = (tag, attrs = {}) => {
   return el;
 };
 const pad = (n, l) => String(n).padStart(l, '0');
-const komma = (x, d = 2) => Math.abs(x).toFixed(d).replace('.', ',');
 const anzahl = (n, ein, mehr) => `${n} ${n === 1 ? ein : mehr}`;
 const ruhig = () => RUHIG.matches;
 const speicher = {
@@ -184,10 +183,6 @@ function srcset(album, foto) {
     const breite = foto.w >= foto.h ? g : Math.round(g * foto.w / foto.h);
     return `media/${album.nr}/${pad(foto.nr, 3)}-${g}.${foto.ext || 'webp'} ${breite}w`;
   }).join(', ');
-}
-function koordinaten(ort) {
-  if (!ort) return '';
-  return `${komma(ort.lat)}° ${ort.lat >= 0 ? 'N' : 'S'}  ${komma(ort.lon)}° ${ort.lon >= 0 ? 'O' : 'W'}`;
 }
 function exifDatum(s) {
   const m = /^(\d{4}):(\d{2}):(\d{2})/.exec(s || '');
@@ -1253,7 +1248,7 @@ function blattZeigen(p) {
     h('button', { class: 'blatt-zu', 'aria-label': 'Schließen', icon: 'zu', onclick: () => blattSchliessen() }),
     h('div', { class: 'blatt-kopf' }, h('h3', { text: p.name }), h('span', { class: 'zahl', text: anzahl(p.alben.length, 'Album', 'Alben') })),
     // höchstens fünf Alben sichtbar, der Rest per Scrollen
-    h('div', { class: 'blatt-scroll' }, liste));
+    h('div', { class: `blatt-scroll${p.alben.length > 5 ? ' mehr' : ''}` }, liste));
   app.globusAnsicht.append(app.blatt);
   app.globus.hervorheben(p.alben);
   // den gewählten Punkt mittig in den freien Kartenbereich über der Liste rücken
@@ -1732,7 +1727,15 @@ class AlbumAnsicht {
       if (this.zoom) { this.zoomBewegen(zeiger); return; }
       if (!s || e.pointerId !== s.id) return;
       const dx = e.clientX - s.x, dy = e.clientY - s.y;
+      if (s.runter) { this.runterZiehen(dy); return; }
       if (!s.zieht) {
+        // von oben nach unten ziehen: Album schließen
+        if (!s.unterbrochen && dy > 10 && dy > Math.abs(dx) * 1.3) {
+          s.runter = true;
+          try { b.setPointerCapture(e.pointerId); } catch { /* egal */ }
+          this.runterZiehen(dy);
+          return;
+        }
         if (!s.unterbrochen && (Math.abs(dx) < 8 || Math.abs(dx) < Math.abs(dy))) return;
         if (s.unterbrochen && Math.abs(dx) < 2) return;
         s.zieht = true;
@@ -1750,6 +1753,12 @@ class AlbumAnsicht {
       const war = s;
       s = null;
       const x = war.basis + dx;
+      if (war.runter) {
+        const dy = e.clientY - war.y;
+        const tempo = dy / Math.max(1, performance.now() - war.t);
+        this.runterLoslassen(e.type === 'pointerup' && (dy > Math.min(160, innerHeight * 0.2) || (tempo > 0.5 && dy > 40)));
+        return;
+      }
       if (!war.zieht) {
         if (e.type === 'pointerup' && performance.now() - war.t < 500) {
           const r = b.getBoundingClientRect();
@@ -1776,6 +1785,28 @@ class AlbumAnsicht {
     };
     b.addEventListener('pointerup', ende);
     b.addEventListener('pointercancel', ende);
+  }
+
+  /* Album folgt dem Finger nach unten, die Übersicht scheint durch */
+  runterZiehen(dy) {
+    const y = Math.max(0, dy);
+    this.el.style.transition = 'none';
+    this.el.style.transform = `translateY(${y}px)`;
+    this.el.style.opacity = String(Math.max(0.35, 1 - y / (innerHeight * 1.2)));
+  }
+
+  runterLoslassen(schliessen) {
+    if (schliessen) {
+      this.weggewischt = true;
+      this.el.style.transition = ruhig() ? 'none' : 'transform 240ms cubic-bezier(.4,0,1,1), opacity 240ms ease';
+      this.el.style.transform = `translateY(${innerHeight}px)`;
+      this.el.style.opacity = '0';
+      setTimeout(() => { if (app.album === this) albumSchliessen(); }, ruhig() ? 0 : 230);
+    } else {
+      this.el.style.transition = 'transform 380ms cubic-bezier(.3,1.4,.5,1), opacity 300ms ease';
+      this.el.style.transform = '';
+      this.el.style.opacity = '';
+    }
   }
 
   springeZu(k) {
@@ -1898,7 +1929,7 @@ function albumEntfernen() {
     if (ziel) ziel.style.viewTransitionName = 'albumtitel';
     document.title = document.body.dataset.titel;
   };
-  if (ziel && document.startViewTransition && !ruhig()) {
+  if (ziel && !alt.weggewischt && document.startViewTransition && !ruhig()) {
     alt.titelFuerUebergang().style.viewTransitionName = 'albumtitel';
     const t = document.startViewTransition(weg);
     t.finished.finally(() => { ziel.style.viewTransitionName = ''; });
@@ -2015,11 +2046,6 @@ async function start() {
   ALBEN = datenVorbereiten(DATEN);
   app.punkte = punkteBilden(ALBEN);
   document.body.dataset.titel = document.title;
-
-  const neuestes = ALBEN.find(x => x.hatOrt);
-  const koord = document.querySelector('.koord');
-  if (neuestes) { koord.textContent = koordinaten(neuestes.ort); koord.setAttribute('aria-label', `Koordinaten des neuesten Albums: ${neuestes.ort.name}`); }
-  else koord.textContent = '';
 
   const kopf = document.querySelector('.kopf');
   const haupt = document.querySelector('#haupt');
