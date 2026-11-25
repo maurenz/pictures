@@ -289,8 +289,8 @@ if ($aktion === 'foto_hochladen' && $methode === 'POST') {
         $a['naechstesFoto'] = $n + 1;
         return $n;
     });
-    [$w, $h, $ext, $groessen] = bild_verarbeiten($tmp, MEDIEN . '/' . $nr, $fotoNr);
-    $foto = ['nr' => $fotoNr, 'w' => $w, 'h' => $h, 'ext' => $ext, 'groessen' => $groessen, 'exif' => $exif, 'kennung' => $kennung, 'hochgeladen' => date('c')];
+    [$w, $h, $ext, $groessen, $farbe] = bild_verarbeiten($tmp, MEDIEN . '/' . $nr, $fotoNr);
+    $foto = ['nr' => $fotoNr, 'w' => $w, 'h' => $h, 'ext' => $ext, 'groessen' => $groessen, 'farbe' => $farbe, 'exif' => $exif, 'kennung' => $kennung, 'hochgeladen' => date('c')];
     mit_db(function (array &$db) use ($nr, $foto) {
         $a = &album_finden($db, $nr);
         $a['fotos'][] = $foto;
@@ -300,6 +300,46 @@ if ($aktion === 'foto_hochladen' && $methode === 'POST') {
         $a['geaendert'] = date('c');
     });
     antwort(['ok' => true, 'foto' => $foto]);
+}
+
+/* Fehlende Farbwerte älterer Fotos still nachtragen (aus der kleinsten Bildstufe), je Aufruf bis zu 25 Fotos */
+if ($aktion === 'farben_nachtragen' && $methode === 'POST') {
+    $offen = [];
+    foreach (db_lesen()['alben'] as $a) {
+        foreach ($a['fotos'] ?? [] as $f) {
+            if (empty($f['farbe'])) {
+                $offen[] = [(int) $a['nr'], (int) $f['nr'], (string) $f['ext'], min($f['groessen'] ?: [400])];
+            }
+        }
+    }
+    if (!$offen) {
+        antwort(['ok' => true, 'offen' => 0]);
+    }
+    $farben = [];
+    foreach (array_slice($offen, 0, 25) as [$anr, $fnr, $ext, $g]) {
+        $datei = sprintf('%s/%d/%03d-%d.%s', MEDIEN, $anr, $fnr, $g, $ext);
+        $bild = is_file($datei) ? ($ext === 'webp' ? @imagecreatefromwebp($datei) : @imagecreatefromjpeg($datei)) : false;
+        // nicht lesbar: neutral markieren, damit es nicht endlos erneut versucht wird
+        $farben["$anr/$fnr"] = $bild ? bild_farbe($bild) : '#808080';
+    }
+    $rest = mit_db(function (array &$db) use ($farben) {
+        $n = 0;
+        foreach ($db['alben'] as &$a) {
+            foreach ($a['fotos'] as &$f) {
+                $k = $a['nr'] . '/' . $f['nr'];
+                if (isset($farben[$k]) && empty($f['farbe'])) {
+                    $f['farbe'] = $farben[$k];
+                }
+                if (empty($f['farbe'])) {
+                    $n++;
+                }
+            }
+            unset($f);
+        }
+        unset($a);
+        return $n;
+    });
+    antwort(['ok' => true, 'offen' => $rest]);
 }
 
 /* ---------- Freigabelinks: je Link ein Name und mehrere Alben ---------- */

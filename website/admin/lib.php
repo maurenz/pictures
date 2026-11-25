@@ -209,6 +209,7 @@ function album_oeffentlich(array $a): array
             'h'        => (int) $f['h'],
             'ext'      => (string) $f['ext'],
             'groessen' => array_values($f['groessen']),
+            'farbe'    => $f['farbe'] ?? null,
             'exif'     => (object) ($f['exif'] ?? []),
         ], $a['fotos']),
     ];
@@ -551,7 +552,61 @@ function bild_verarbeiten(string $quelle, string $zielOrdner, int $fotoNr): arra
         }
     }
     sort($groessen);
-    return [$w, $h, $ext, $groessen];
+    return [$w, $h, $ext, $groessen, bild_farbe($bild)];
+}
+
+/** Prägende Farbe eines Bildes als Hex-Wert (für die Sortierung „Farbe“ im Kontaktbogen).
+    Kräftige Farben zählen stärker als graue Flächen; ist kaum Farbe da, wird ein neutraler Ton zurückgegeben. */
+function bild_farbe(\GdImage $bild): string
+{
+    $kw = 24;
+    $kh = 36;
+    $k = imagecreatetruecolor($kw, $kh);
+    imagecopyresampled($k, $bild, 0, 0, 0, 0, $kw, $kh, imagesx($bild), imagesy($bild));
+    $sx = $sy = $gew = $sumS = $sumV = 0.0;
+    $r0 = $g0 = $b0 = 0.0;
+    for ($y = 0; $y < $kh; $y++) {
+        for ($x = 0; $x < $kw; $x++) {
+            $c = imagecolorat($k, $x, $y);
+            $r = (($c >> 16) & 255) / 255;
+            $g = (($c >> 8) & 255) / 255;
+            $b = ($c & 255) / 255;
+            $r0 += $r; $g0 += $g; $b0 += $b;
+            $mx = max($r, $g, $b);
+            $mn = min($r, $g, $b);
+            $d = $mx - $mn;
+            $sat = $mx > 0 ? $d / $mx : 0;
+            if ($d <= 0.0001) {
+                continue;
+            }
+            $hue = $mx === $r ? fmod(($g - $b) / $d, 6) : ($mx === $g ? ($b - $r) / $d + 2 : ($r - $g) / $d + 4);
+            $hue = deg2rad(fmod($hue * 60 + 360, 360));
+            $w = $sat * $sat * $mx + 0.0001;
+            $sx += cos($hue) * $w;
+            $sy += sin($hue) * $w;
+            $gew += $w;
+            $sumS += $sat * $w;
+            $sumV += $mx * $w;
+        }
+    }
+    imagedestroy($k);
+    $n = $kw * $kh;
+    $mittelS = $gew > 0 ? $sumS / $gew : 0;
+    if ($gew < 0.02 * $n || $mittelS < 0.12) {
+        // kaum Farbe: mittlerer Grauton
+        $v = ($r0 + $g0 + $b0) / (3 * $n);
+        return sprintf('#%02x%02x%02x', (int) round($v * 255), (int) round($v * 255), (int) round($v * 255));
+    }
+    $h = fmod(rad2deg(atan2($sy, $sx)) + 360, 360) / 60;
+    $s = min(1, $mittelS);
+    $v = min(1, $sumV / $gew);
+    $c = $v * $s;
+    $x = $c * (1 - abs(fmod($h, 2) - 1));
+    [$r, $g, $b] = match ((int) floor($h) % 6) {
+        0 => [$c, $x, 0], 1 => [$x, $c, 0], 2 => [0, $c, $x], 3 => [0, $x, $c], 4 => [$x, 0, $c], default => [$c, 0, $x],
+    };
+    $m = $v - $c;
+    return sprintf('#%02x%02x%02x', (int) round(($r + $m) * 255), (int) round(($g + $m) * 255), (int) round(($b + $m) * 255));
 }
 
 function foto_dateien_loeschen(int $albumNr, int $fotoNr): void

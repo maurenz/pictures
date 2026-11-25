@@ -278,7 +278,7 @@ async function listeAnsicht() {
       h('span', { class: 'mitte' },
         h('span', { class: 'titel', text: a.titel }),
         h('span', { class: 'unter zahl', text: `${MON[a.monat - 1]} ${a.jahr} · ${a.fotos.length} ${a.fotos.length === 1 ? 'Foto' : 'Fotos'}${a.ort ? '' : ' · ohne Ort'}` })),
-      h('span', { class: `status ${a.status}`, text: statusText(a) })));
+      h('span', { class: `status ${a.status}${a.status === 'link' && statusText(a) === 'Zuordnen' ? ' offen' : ''}`, text: statusText(a) })));
   }
   seite(
     h('header', { class: 'kopf' },
@@ -292,8 +292,8 @@ async function listeAnsicht() {
 function statusText(a) {
   if (a.status === 'online') return a.fotos.length ? 'Online' : 'Online, ohne Fotos';
   if (a.status === 'link') {
-    const n = (STAND.freigaben || []).filter(f => f.aktiv && f.alben.includes(a.nr)).length;
-    return n ? `Mit Link · ${n}` : 'Mit Link · noch in keiner Freigabe';
+    const namen = (STAND.freigaben || []).filter(f => f.alben.includes(a.nr)).map(f => f.name + (f.aktiv ? '' : ' (aus)'));
+    return namen.length ? namen.join(', ') : 'Zuordnen';
   }
   return 'Entwurf';
 }
@@ -627,76 +627,103 @@ async function kopieren(text) {
 
 async function freigabenAnsicht() {
   try { const d = await api('daten'); STAND = d; } catch { /* mit vorhandenem Stand */ }
+  const freigaben = STAND.freigaben || [];
   const linkAlben = STAND.alben.filter(a => a.status === 'link').sort((a, b) => (b.jahr - a.jahr) || (b.monat - a.monat));
-  const liste = h('div', { class: 'freigaben' });
-  const neuZeichnen = () => freigabenAnsicht();
 
-  const speichern = async (f, still = false) => {
+  const speichern = async f => {
     try {
       const r = await api('freigabe_speichern', { daten: { id: f.id, name: f.name, alben: f.alben, aktiv: f.aktiv } });
       Object.assign(f, r.freigabe);
-      if (!still) meldung('Freigabe gespeichert.');
       return true;
     } catch (err) { meldung(err.message, 'fehler'); return false; }
   };
-
-  for (const f of STAND.freigaben || []) {
-    const karte = h('section', { class: `freigabe${f.aktiv ? '' : ' aus'}` });
-    const name = h('input', { type: 'text', maxlength: '60', value: f.name, 'aria-label': 'Name der Freigabe' });
-    name.addEventListener('change', async () => { f.name = name.value.trim() || f.name; await speichern(f); });
-    const aktiv = h('input', { type: 'checkbox', checked: f.aktiv });
-    aktiv.addEventListener('change', async () => {
-      f.aktiv = aktiv.checked;
-      karte.classList.toggle('aus', !f.aktiv);
-      await speichern(f);
-    });
-    const url = h('input', { type: 'text', readonly: true, value: freigabeUrl(f), 'aria-label': 'Freigabelink', onfocus: e => e.target.select() });
-    const auswahl = h('div', { class: 'f-alben' });
-    if (!linkAlben.length) auswahl.append(h('p', { class: 'hinweis', text: 'Noch kein Album mit Status „Mit Link“. Den Status stellst du im Album ein.' }));
-    for (const a of linkAlben) {
-      const box = h('input', { type: 'checkbox', checked: f.alben.includes(a.nr) });
-      box.addEventListener('change', async () => {
-        f.alben = box.checked ? [...new Set([...f.alben, a.nr])] : f.alben.filter(x => x !== a.nr);
-        await speichern(f, true);
-        zaehler.textContent = anzahlText(f);
-      });
-      auswahl.append(h('label', { class: 'f-album' }, box,
-        h('span', { class: 'f-titel', text: a.titel }),
-        h('span', { class: 'f-datum zahl', text: `${MON[a.monat - 1]} ${a.jahr}` })));
-    }
-    const anzahlText = x => `${x.alben.length} ${x.alben.length === 1 ? 'zusätzliches Album' : 'zusätzliche Alben'} · alle öffentlichen Alben immer dabei`;
-    const zaehler = h('p', { class: 'hinweis', text: anzahlText(f) });
-    let loeschenBereit = false;
-    const loeschen = h('button', { type: 'button', class: 'link gefahr', text: 'Freigabe löschen' });
-    loeschen.addEventListener('click', async () => {
-      if (!loeschenBereit) { loeschenBereit = true; loeschen.textContent = 'Wirklich löschen? Der Link funktioniert dann nicht mehr.'; return; }
-      try { await api('freigabe_loeschen', { daten: { id: f.id } }); meldung('Freigabe gelöscht.'); neuZeichnen(); } catch (err) { meldung(err.message, 'fehler'); }
-    });
-    const erneuern = h('button', { type: 'button', class: 'link', text: 'Neuen Link erzeugen' });
-    erneuern.addEventListener('click', async () => {
-      if (!confirm('Neuen Link erzeugen? Der bisherige Link funktioniert danach nicht mehr.')) return;
-      try { const r = await api('freigabe_erneuern', { daten: { id: f.id } }); Object.assign(f, r.freigabe); url.value = freigabeUrl(f); meldung('Neuer Link erzeugt.'); } catch (err) { meldung(err.message, 'fehler'); }
-    });
-    karte.append(
-      h('div', { class: 'f-kopf' }, name, h('label', { class: 'f-aktiv' }, aktiv, h('span', { text: 'aktiv' }))),
-      h('div', { class: 'f-link' }, url, knopf('Kopieren', () => kopieren(url.value))),
-      h('h3', { class: 'label', text: 'Zusätzliche Alben' }),
-      auswahl, zaehler,
-      h('div', { class: 'f-aktionen' }, erneuern, loeschen));
-    liste.append(karte);
-  }
-  if (!(STAND.freigaben || []).length) liste.append(h('p', { class: 'leer', text: 'Noch keine Freigaben. Eine Freigabe ist ein geheimer Link zur ganzen Website, der zusätzlich ausgewählte Alben zeigt – zum Beispiel für Familie oder Freunde.' }));
-
   const neu = async () => {
-    const n = (STAND.freigaben || []).length + 1;
-    const f = { id: '', name: `Freigabe ${n}`, alben: [], aktiv: true };
-    if (await speichern(f, true)) { meldung('Freigabe angelegt.'); neuZeichnen(); }
+    const f = { id: '', name: `Link ${freigaben.length + 1}`, alben: [], aktiv: true };
+    if (await speichern(f)) { meldung('Link angelegt.'); freigabenAnsicht(); }
   };
+
+  // Tabelle: eine Spalte je Link, eine Zeile je Album mit Status „Mit Link“
+  const spalte = f => `f-${f.id}`;
+  const kopf = h('tr', {}, h('th', { class: 'f-ecke', scope: 'col', text: 'Album' }));
+  const kopieren = h('tr', { class: 'f-zeile-kopieren' }, h('th', { scope: 'row', text: 'Link' }));
+  const aktiv = h('tr', { class: 'f-zeile-aktiv' }, h('th', { scope: 'row', text: 'Aktiv' }));
+  const aktionen = h('tr', { class: 'f-zeile-aktionen' }, h('th', { scope: 'row' }));
+  const zeilen = linkAlben.map(a => h('tr', {}, h('th', { scope: 'row', class: 'f-album' },
+    h('span', { class: 'f-titel', text: a.titel }),
+    h('span', { class: 'f-datum zahl', text: `${MON[a.monat - 1]} ${a.jahr}` }))));
+
+  for (const f of freigaben) {
+    const aus = () => { for (const z of tabelle.querySelectorAll(`.${spalte(f)}`)) z.classList.toggle('aus', !f.aktiv); };
+    // Kopf: Name des Links, direkt bearbeitbar
+    const name = h('input', { type: 'text', maxlength: '60', value: f.name, 'aria-label': 'Name des Links' });
+    name.addEventListener('change', async () => {
+      const alt = f.name;
+      f.name = name.value.trim() || alt;
+      name.value = f.name;
+      if (await speichern(f)) meldung('Name gespeichert.'); else f.name = alt;
+    });
+    kopf.append(h('th', { scope: 'col', class: spalte(f) }, name));
+    // Kopieren: kurz orange „Kopiert“
+    const knopfK = h('button', { type: 'button', class: 'f-kopieren', text: 'Kopieren' });
+    knopfK.addEventListener('click', async () => {
+      const url = freigabeUrl(f);
+      try { await navigator.clipboard.writeText(url); } catch { window.prompt('Link kopieren:', url); return; }
+      knopfK.textContent = 'Kopiert';
+      knopfK.classList.add('kopiert');
+      clearTimeout(knopfK._t);
+      knopfK._t = setTimeout(() => { knopfK.textContent = 'Kopieren'; knopfK.classList.remove('kopiert'); }, 1500);
+    });
+    kopieren.append(h('td', { class: spalte(f) }, knopfK));
+    // je Album ein Haken
+    linkAlben.forEach((a, k) => {
+      const box = h('input', { type: 'checkbox', checked: f.alben.includes(a.nr), 'aria-label': `${a.titel} im Link „${f.name}“` });
+      box.addEventListener('change', async () => {
+        const vorher = f.alben;
+        f.alben = box.checked ? [...new Set([...f.alben, a.nr])] : f.alben.filter(x => x !== a.nr);
+        if (!await speichern(f)) { f.alben = vorher; box.checked = !box.checked; }
+      });
+      zeilen[k].append(h('td', { class: spalte(f) }, box));
+    });
+    // aktiv / aus
+    const an = h('input', { type: 'checkbox', checked: f.aktiv, 'aria-label': `Link „${f.name}“ aktiv` });
+    an.addEventListener('change', async () => {
+      f.aktiv = an.checked;
+      aus();
+      if (await speichern(f)) meldung(f.aktiv ? 'Link ist wieder aktiv.' : 'Link ist abgeschaltet.');
+    });
+    aktiv.append(h('td', { class: spalte(f) }, an));
+    // Neuer Schlüssel / Löschen
+    const erneuern = h('button', { type: 'button', class: 'link', text: 'Neu erzeugen' });
+    erneuern.addEventListener('click', async () => {
+      if (!confirm(`Neuen Link für „${f.name}“ erzeugen? Der bisherige funktioniert danach nicht mehr.`)) return;
+      try { const r = await api('freigabe_erneuern', { daten: { id: f.id } }); Object.assign(f, r.freigabe); meldung('Neuer Link erzeugt. Bitte erneut kopieren.'); } catch (err) { meldung(err.message, 'fehler'); }
+    });
+    const loeschen = h('button', { type: 'button', class: 'link gefahr', text: 'Löschen' });
+    loeschen.addEventListener('click', async () => {
+      if (!confirm(`Link „${f.name}“ löschen? Er funktioniert danach nicht mehr.`)) return;
+      try { await api('freigabe_loeschen', { daten: { id: f.id } }); meldung('Link gelöscht.'); freigabenAnsicht(); } catch (err) { meldung(err.message, 'fehler'); }
+    });
+    aktionen.append(h('td', { class: spalte(f) }, h('span', { class: 'f-aktionen' }, erneuern, loeschen)));
+  }
+  // Abstand rechts, damit die letzte Spalte nicht am Rand klebt
+  kopf.append(h('th', { scope: 'col', class: 'f-neu' }));
+  for (const z of [kopieren, ...zeilen, aktiv, aktionen]) z.append(h('td', { class: 'f-neu' }));
+
+  const tabelle = h('table', { class: 'f-tabelle' }, h('thead', {}, kopf), h('tbody', {}, kopieren, ...zeilen, aktiv, aktionen));
+  for (const f of freigaben) for (const z of tabelle.querySelectorAll(`.${spalte(f)}`)) z.classList.toggle('aus', !f.aktiv);
+
+  const hinweise = [];
+  if (!linkAlben.length) hinweise.push(h('p', { class: 'hinweis', text: 'Noch kein Album mit Status „Mit Link“. Den Status stellst du im Album ein; danach erscheint es hier als Zeile.' }));
+  if (!freigaben.length) hinweise.push(h('p', { class: 'hinweis', text: 'Ein Link öffnet die ganze Website und zeigt zusätzlich die hier angehakten Alben – zum Beispiel für Familie oder Freunde.' }));
+
   seite(
     h('header', { class: 'kopf' },
       h('p', { class: 'kicker', text: 'Verwaltung' }),
       h('div', { class: 'kopfzeile' }, h('h1', { text: 'Freigaben' }), knopf('+ Neuer Link', neu))),
-    liste,
+    h('div', { class: 'freigaben' },
+      h('div', { class: 'f-scroll' }, tabelle),
+      ...hinweise,
+      h('p', { class: 'hinweis', text: 'Alle öffentlichen Alben sind in jedem Link immer enthalten.' })),
     navigation('freigaben'));
 }
 
@@ -776,6 +803,20 @@ async function regionenNachtragen() {
   regionenLaeuft = false;
 }
 
+/* Farbwerte älterer Fotos (für die Sortierung „Farbe“ im Kontaktbogen) still nachtragen */
+let farbenLaeuft = false;
+async function farbenNachtragen() {
+  if (farbenLaeuft) return;
+  farbenLaeuft = true;
+  try {
+    for (let i = 0; i < 200; i++) {
+      const r = await api('farben_nachtragen', { daten: {} });
+      if (!r.offen) break;
+    }
+  } catch { /* beim nächsten Laden erneut */ }
+  farbenLaeuft = false;
+}
+
 async function start() {
   try {
     const s = await api('status');
@@ -787,6 +828,7 @@ async function start() {
     if (!s.https) meldung('Achtung: Die Verbindung ist nicht verschlüsselt (kein HTTPS).', 'fehler');
     route();
     setTimeout(regionenNachtragen, 1500);
+    setTimeout(farbenNachtragen, 2500);
   } catch (err) {
     seite(h('div', { class: 'login' }, h('h1', { text: 'Fehler' }), h('p', { text: err.message })));
   }

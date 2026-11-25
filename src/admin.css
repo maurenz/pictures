@@ -109,21 +109,29 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--s
 .segment label + label { border-left: 0; }
 .segment-feld .hinweis { margin-top: 8px; }
 
-/* Freigaben */
-.freigaben { flex: 1; display: flex; flex-direction: column; gap: 28px; padding: 0 var(--rand) 32px; }
-.freigabe { display: flex; flex-direction: column; gap: 12px; padding-top: 20px; border-top: 1px solid var(--linie); transition: opacity .25s ease; }
-.freigabe.aus { opacity: .55; }
-.f-kopf { display: flex; align-items: center; gap: 14px; }
-.f-kopf input[type="text"] { flex: 1; font-size: 20px; font-weight: 300; }
-.f-aktiv { display: flex; align-items: center; gap: 6px; font-size: 14px; cursor: pointer; }
-.f-link { display: flex; gap: 8px; }
-.f-link input { flex: 1; font-size: 13px; color: var(--grau); }
-.f-alben { display: flex; flex-direction: column; }
-.f-album { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 44px; border-bottom: 1px solid var(--linie); cursor: pointer; }
-.f-album input, .f-aktiv input { width: 18px; height: 18px; accent-color: var(--schwarz); }
-.f-titel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.f-datum { font-size: 12px; color: var(--grau); }
-.f-aktionen { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 20px; }
+/* Freigaben: Tabelle mit einer Spalte je Link */
+.freigaben { flex: 1; display: flex; flex-direction: column; gap: 14px; padding: 0 0 32px; }
+.freigaben .hinweis { margin: 0; padding: 0 var(--rand); }
+.f-scroll { overflow-x: auto; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
+.f-tabelle { border-collapse: separate; border-spacing: 0; min-width: 100%; font-size: 14px; }
+.f-tabelle th, .f-tabelle td { height: 48px; padding: 0 10px; border-bottom: 1px solid var(--linie); text-align: center; vertical-align: middle; white-space: nowrap; background: #fff; transition: opacity .25s ease; }
+.f-tabelle thead th { height: 56px; border-bottom: 1px solid var(--schwarz); }
+.f-tabelle th:first-child { position: sticky; left: 0; z-index: 1; min-width: 132px; max-width: 46vw; padding-left: var(--rand); text-align: left; font-weight: 400; }
+.f-tabelle thead th:first-child, .f-tabelle tbody th[scope="row"]:not(.f-album) { font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--grau); }
+.f-tabelle td, .f-tabelle thead th:not(:first-child) { min-width: 112px; }
+.f-tabelle thead input { width: 104px; padding: 6px 0; border: 0; border-bottom: 1px solid transparent; border-radius: 0; background: none; font: inherit; font-size: 16px; font-weight: 600; text-align: center; }
+.f-tabelle thead input:focus { border-bottom-color: var(--schwarz); outline: none; }
+.f-album { display: table-cell; }
+.f-album .f-titel { display: block; max-width: 44vw; overflow: hidden; text-overflow: ellipsis; font-size: 15px; }
+.f-album .f-datum { display: block; font-size: 11px; color: var(--grau); }
+.f-tabelle input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--schwarz); cursor: pointer; }
+.f-kopieren { min-width: 92px; min-height: 36px; padding: 0 14px; border: 1px solid var(--schwarz); border-radius: 999px; background: #fff; color: var(--schwarz); font: inherit; font-size: 13px; cursor: pointer; transition: background .2s ease, border-color .2s ease, color .2s ease; }
+.f-kopieren.kopiert { background: var(--orange); border-color: var(--orange); color: var(--schwarz); }
+.f-tabelle .aus { opacity: .4; }
+.f-tabelle .f-zeile-aktiv .aus, .f-tabelle thead .aus { opacity: 1; }
+.f-aktionen { display: inline-flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.f-neu { min-width: 0 !important; padding-right: var(--rand) !important; }
+.status.offen { color: var(--orange); }
 .segment label.an { background: var(--schwarz); color: #fff; }
 .segment input { position: absolute; opacity: 0; pointer-events: none; }
 

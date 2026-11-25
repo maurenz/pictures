@@ -27,13 +27,17 @@ Schrift Urbanist (nur serifenlos), Akzentfarbe Orange (#ff6a13). Kein SEO, `noin
    4096 (nur Zoom), 2560, 1600, 800, 400. Die Website nutzt bis 2560 per `srcset`; 4096 wird erst beim Zoomen
    geladen (`zoomBildLaden`). Ältere Fotos haben keine 4096-Stufe – das ist in Ordnung.
 5. **Sichtbarkeit pro Album:** `entwurf` (nirgends), `link` (nur über Freigaben), `online` (öffentlich).
-   Freigaben (`db.freigaben[]`: `id`, `token`, `name`, `alben[]`, `aktiv`) sind geheime Links `/?f=<token>` zur
+   Freigaben (`db.freigaben[]`: `id`, `token`, `name`, `alben[]`, `aktiv`; Verwaltung als Tabelle: Spalte je Link,
+   Zeile je „Mit Link“-Album) sind geheime Links `/?f=<token>` zur
    ganzen Website plus den gewählten `link`-Alben. Der Schlüssel hat 128 Bit; die Website merkt ihn im
    `localStorage`. Erneuern/Deaktivieren/Löschen entfernt die Datei `data/f/<token>.json` → alter Link liefert 404.
    Bilddateien selbst sind nicht geschützt (wer die Adresse kennt, kann sie laden) – das ist so gewollt.
 6. **Albumnummern** sind chronologisch (ältestes = 01) über die jeweils sichtbare Menge; Fotonummern folgen der
    Reihenfolge im Album. Nummern auf dem Server werden nie wiederverwendet (`naechstesAlbum`, `naechstesFoto`).
-7. **Zeitliche Ordnung** im selben Monat: kürzeste Reiseroute (`beste_folge` in PHP und `besteFolge` in JS –
+7. **Kontaktbogen** = Bildindex aller Fotos, sortierbar nach Zeit (mit Jahrestrennern), Farbe oder Zufall
+   (`bogenBauen`). Die Farbe je Foto (`foto.farbe`, Hex) berechnet der Server beim Upload (`bild_farbe`); ältere Fotos
+   trägt die Verwaltung beim Öffnen still nach (`farben_nachtragen`). Kacheln werden in Portionen beim Scrollen gebaut.
+8. **Zeitliche Ordnung** im selben Monat: kürzeste Reiseroute (`beste_folge` in PHP und `besteFolge` in JS –
    beide gleich halten).
 
 ## Sicherheit (Stand und offene Punkte)
