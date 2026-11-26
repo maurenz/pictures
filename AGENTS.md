@@ -79,6 +79,7 @@ Schrift Urbanist (nur serifenlos), Akzentfarbe Orange (#ff6a13). Kein SEO, `noin
   bei den Punkten an.
 - Album-Zoom nur per Fingern (kein Desktop-Zoom), hält solange ein Finger liegt, springt beim Loslassen zurück.
   Keine `gesture*`-Handler im Album – sie stören das Halten auf iOS.
+- Verlauf unten (Zeitstrahl, Ortsliste) nur mit Klasse `mehr`, gesetzt von `verlaufPruefen()`, solange darunter noch etwas folgt.
 - Album: Ziehen nach unten (auf der Bühne) schließt das Album und führt zu `app.letzteUebersicht` zurück
   (Karte, Zeitstrahl oder Kontaktbogen). Dabei ohne View-Transition des Titels (`weggewischt`).
 - Logo „Orbit“ (offener Ring mit orangem Punkt): im Kopf als Inline-SVG plus Wortmarke „pictures“; App-Icons

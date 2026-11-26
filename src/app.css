@@ -217,7 +217,8 @@ html.fest .ansichten, html.fest .ansicht[data-ansicht="globus"] { height: 100%; 
 .blatt-scroll { max-height: calc(5 * 52px); overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; scrollbar-width: none; margin: 0 calc(-1 * var(--rand)); padding: 0 var(--rand); }
 .blatt-scroll::-webkit-scrollbar { display: none; }
 /* mehr als fünf Alben: weicher Verlauf unten wie im Zeitstrahl */
-.blatt-scroll.mehr::after { content: ''; position: sticky; bottom: 0; display: block; height: 44px; margin-top: -44px; background: linear-gradient(to bottom, rgba(255, 255, 255, 0), #fff); pointer-events: none; }
+.blatt-scroll::after { content: ''; position: sticky; bottom: 0; display: block; height: 44px; margin-top: -44px; background: linear-gradient(to bottom, rgba(255, 255, 255, 0), #fff); pointer-events: none; opacity: 0; transition: opacity .3s ease; }
+.blatt-scroll.mehr::after { opacity: 1; }
 .blatt-liste { position: relative; }
 .blatt-liste::before { content: ''; position: absolute; left: 45.5px; top: 14px; bottom: 14px; width: 1px; background: var(--schwarz); }
 .blatt-liste .eintrag { opacity: 1; height: 52px; }
@@ -240,7 +241,8 @@ html.fest .ansichten, html.fest .ansicht[data-ansicht="globus"] { height: 100%; 
 .bogen-foto:hover img { transform: scale(1.04); }
 .bogen-foto .fnr { font-size: 10px; color: var(--grau); }
 /* Zeitstrahl: weicher Verlauf am unteren Rand, solange weitere Einträge folgen */
-.ansicht[data-ansicht="zeit"]::after { content: ''; position: sticky; bottom: 0; display: block; height: 56px; margin-top: -56px; background: linear-gradient(to bottom, rgba(255, 255, 255, 0), #fff); pointer-events: none; }
+.ansicht[data-ansicht="zeit"]::after { content: ''; position: sticky; bottom: 0; display: block; height: 56px; margin-top: -56px; background: linear-gradient(to bottom, rgba(255, 255, 255, 0), #fff); pointer-events: none; opacity: 0; transition: opacity .3s ease; }
+.ansicht[data-ansicht="zeit"].mehr::after { opacity: 1; }
 
 /* ---------- Fuß ---------- */
 .fuss { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 8px var(--rand) calc(28px + env(safe-area-inset-bottom)); font-size: 13px; color: var(--grau); }

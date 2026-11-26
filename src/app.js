@@ -1079,6 +1079,20 @@ function zeitstrahlBauen(alben) {
 }
 
 /* Bei jedem erneuten Öffnen: Linie und Einträge noch einmal aufbauen (nicht bei aktivem Filter) */
+/* Verlauf unten nur zeigen, solange darunter noch Einträge folgen (Zeitstrahl und Ortsliste) */
+function verlaufPruefen() {
+  const z = app.ansichten && app.ansichten.querySelector('[data-ansicht="zeit"]');
+  if (z) {
+    const eigen = z.scrollHeight > z.clientHeight + 1 && getComputedStyle(z).overflowY !== 'visible';
+    const s = eigen ? z : document.scrollingElement;
+    z.classList.toggle('mehr', s.scrollHeight - s.scrollTop - (eigen ? s.clientHeight : innerHeight) > 8);
+  }
+  const l = app.blatt && app.blatt.querySelector('.blatt-scroll');
+  if (l) l.classList.toggle('mehr', l.scrollHeight - l.scrollTop - l.clientHeight > 8);
+}
+document.addEventListener('scroll', verlaufPruefen, { passive: true, capture: true });
+addEventListener('resize', verlaufPruefen);
+
 function zeitstrahlNeu(el) {
   if (!el.offsetParent || el.querySelector('.aus')) return zeitstrahlStarten(el);
   el.classList.remove('laeuft', 'fertig');
@@ -1248,13 +1262,14 @@ function blattZeigen(p) {
     h('button', { class: 'blatt-zu', 'aria-label': 'Schließen', icon: 'zu', onclick: () => blattSchliessen() }),
     h('div', { class: 'blatt-kopf' }, h('h3', { text: p.name }), h('span', { class: 'zahl', text: anzahl(p.alben.length, 'Album', 'Alben') })),
     // höchstens fünf Alben sichtbar, der Rest per Scrollen
-    h('div', { class: `blatt-scroll${p.alben.length > 5 ? ' mehr' : ''}` }, liste));
+    h('div', { class: 'blatt-scroll' }, liste));
   app.globusAnsicht.append(app.blatt);
   app.globus.hervorheben(p.alben);
   // den gewählten Punkt mittig in den freien Kartenbereich über der Liste rücken
   const blatt = app.blatt;
   requestAnimationFrame(() => {
     if (app.blatt !== blatt) return;
+    verlaufPruefen();
     const g = app.globus.el.getBoundingClientRect();
     const info = app.globusInfo.getBoundingClientRect();
     const b = blatt.getBoundingClientRect();
@@ -1420,6 +1435,7 @@ function ansichtSetzen(neu) {
     app.ansichten.querySelector('[data-ansicht="bogen"]').append(app.bogen);
   }
   requestAnimationFrame(() => {
+    verlaufPruefen();
     // Zeitstrahl wieder sichtbar geworden: Linie und Einträge neu aufbauen
     if (app.zeitstrahl) (zeitWarAn ? zeitstrahlStarten : zeitstrahlNeu)(app.zeitstrahl);
     if (app.globus && app.globus.el.offsetParent) { app.globus.render(); app.globus.starten(); }
@@ -1790,6 +1806,9 @@ class AlbumAnsicht {
   /* Album folgt dem Finger nach unten, die Übersicht scheint durch */
   runterZiehen(dy) {
     const y = Math.max(0, dy);
+    // darunter liegt die helle Übersicht: Seitenhintergrund nicht dunkel lassen
+    document.documentElement.style.backgroundColor = '';
+    document.body.style.backgroundColor = '';
     this.el.style.transition = 'none';
     this.el.style.transform = `translateY(${y}px)`;
     this.el.style.opacity = String(Math.max(0.35, 1 - y / (innerHeight * 1.2)));
@@ -1803,6 +1822,7 @@ class AlbumAnsicht {
       this.el.style.opacity = '0';
       setTimeout(() => { if (app.album === this) albumSchliessen(); }, ruhig() ? 0 : 230);
     } else {
+      statusFarbe(this.dunkel);
       this.el.style.transition = 'transform 380ms cubic-bezier(.3,1.4,.5,1), opacity 300ms ease';
       this.el.style.transform = '';
       this.el.style.opacity = '';
